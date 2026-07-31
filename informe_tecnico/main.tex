@@ -124,6 +124,9 @@ El objetivo general de esta evaluación es realizar un despliegue seguro del sis
 \subsection{Enlace al Repositorio de Manifiestos de Kubernetes}
 Repositorio GitHub (manifiestos \texttt{.yml}): \url{https://github.com/IMarcusDev/Evaluacion_Final_k8s_30735_DSS/tree/main}
 
+\subsection{Enlace al Repositorio Monorepo de la Aplicación InvenTrack}
+Repositorio GitHub (monorepo): \url{https://github.com/IMarcusDev/Proyecto_Final_Monorepo_U3_DSS/tree/main}
+
 %=====================================================================
 % 1. DOCKERIZACIÓN DE COMPONENTES (10%)
 %=====================================================================
@@ -381,30 +384,178 @@ spec:
 %=====================================================================
 \section{Despliegue en el Clúster y Configuración de Ingress}
 
+El despliegue de InvenTrack se realizó sobre un clúster local de Kubernetes gestionado con Minikube. Esta sección describe las características del clúster, el controlador Ingress empleado, la resolución del dominio \texttt{conjunta3p.espe.edu.ec} y las evidencias del despliegue. Asimismo, se documenta una incidencia surgida durante la primera puesta en marcha y la forma en que se resolvió, dado que constituye parte del procedimiento seguido.
+
 \subsection{Descripción del Clúster}
-% Minikube / Kind / nube. >>> LLENAR <<<
+
+El clúster se levantó con Minikube 1.38.1 sobre un equipo con Arch Linux, empleando el controlador de Docker (\textit{driver} \texttt{docker}) y el mismo Docker como entorno de ejecución de contenedores. Se configuró un único nodo con rol de plano de control, que ejecutó la versión 1.35.1 de Kubernetes y quedó accesible en la dirección \texttt{192.168.49.2}. Esta topología de un solo nodo resultó suficiente para el alcance del entregable, ya que reprodujo el comportamiento de un clúster real sin la complejidad de una instalación multinodo.
+
+Dado que Minikube utiliza un demonio de Docker propio, aislado del demonio del sistema anfitrión, las imágenes construidas en el equipo no estuvieron disponibles de forma automática dentro del clúster. Por esta razón, tras construir las imágenes del backend y del frontend se cargaron de manera explícita en Minikube con el comando \texttt{minikube image load}. El Listado \ref{lst:buildload} presenta la secuencia aplicada. Este paso fue determinante, puesto que su omisión provocó la incidencia descrita en la subsección \emph{Incidencia durante el Despliegue: ImagePullBackOff}.
+
+\begin{lstlisting}[language=bash,caption={Construcción y carga de las imágenes en Minikube},label=lst:buildload]
+# Construir las imágenes con el Docker del host
+docker build -t inventrack-backend:1.0 ./backend
+docker build -t inventrack-frontend:1.0 ./frontend
+
+# Cargar las imágenes dentro del demonio de Minikube
+minikube image load inventrack-backend:1.0
+minikube image load inventrack-frontend:1.0
+
+# Verificar que quedaron disponibles en el clúster
+minikube image ls | grep inventrack
+\end{lstlisting}
 
 \subsection{Controlador Ingress}
-% Nginx Ingress Controller u otro. >>> LLENAR <<<
+
+El enrutamiento externo se apoyó en el controlador Ingress Nginx, habilitado como complemento (\textit{addon}) de Minikube. Al activar el complemento, Minikube desplegó el controlador \texttt{ingress-nginx-controller} en el namespace \texttt{ingress-nginx}, que quedó en estado \texttt{Running} y atendió las peticiones dirigidas a la dirección del clúster. El recurso Ingress de InvenTrack declaró la clase \texttt{nginx}, de modo que este controlador fue el encargado de aplicar las reglas de enrutamiento por ruta definidas en el Listado \ref{lst:ingress}. El Listado \ref{lst:addoningress} muestra los comandos empleados para habilitar y verificar el controlador.
+
+\begin{lstlisting}[language=bash,caption={Habilitación y verificación del controlador Ingress Nginx},label=lst:addoningress]
+# Habilitar el controlador Ingress Nginx como addon de Minikube
+minikube addons enable ingress
+
+# Verificar que el controlador está en ejecución
+kubectl get pods -n ingress-nginx
+\end{lstlisting}
 
 \subsection{Resolución del Dominio conjunta3p.espe.edu.ec}
-% Justificar cómo se resolvió el DNS o el uso del archivo /etc/hosts.
+
+El dominio \texttt{conjunta3p.espe.edu.ec} no corresponde a un registro público con resolución DNS real, por lo que en el entorno de prueba se resolvió de forma local. Para ello se añadió una entrada estática en el archivo \texttt{/etc/hosts} que asoció el dominio a la dirección del Ingress de Minikube (\texttt{192.168.49.2}), tal como se muestra en el Listado \ref{lst:hosts}. Con esta configuración, el navegador envió la cabecera \texttt{Host: conjunta3p.espe.edu.ec} en cada petición, y el controlador Ingress enrutó el tráfico según el campo \texttt{host} de sus reglas.
+
 \begin{lstlisting}[language=bash,caption={Configuración de /etc/hosts para el entorno de prueba},label=lst:hosts]
-# >>> Ejemplo: 192.168.49.2   conjunta3p.espe.edu.ec <<<
+# Obtener la IP del clúster/Ingress de Minikube
+minikube ip                     # 192.168.49.2
+
+# Mapear el dominio a esa IP
+echo "$(minikube ip) conjunta3p.espe.edu.ec" | sudo tee -a /etc/hosts
+
+# Comprobar la resolución
+getent hosts conjunta3p.espe.edu.ec
+\end{lstlisting}
+
+La Figura \ref{fig:hosts} presenta la ejecución de estos comandos. En ella se observa que \texttt{minikube ip} devolvió la dirección \texttt{192.168.49.2} y que \texttt{getent hosts} confirmó la resolución del dominio hacia esa misma dirección.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1\linewidth]{Resolucion_del_dominio.png}
+  \caption{Resolución local del dominio \texttt{conjunta3p.espe.edu.ec} mediante \texttt{/etc/hosts}.}
+  \label{fig:hosts}
+\end{figure}
+
+\subsection{Proceso de Despliegue}
+
+Los manifiestos se aplicaron en el orden fijado por su numeración, de manera que los recursos base existieran antes que los componentes dependientes. Primero se crearon el namespace, el Secret y el ConfigMap de configuración. A continuación se generó el ConfigMap \texttt{mysql-initdb} a partir de la carpeta \texttt{mysql-init/}, que contiene el esquema y los datos iniciales, y se desplegó la base de datos, cuyo despliegue se esperó con \texttt{kubectl rollout status}. Por último se aplicaron el backend, el frontend y el Ingress. El Listado \ref{lst:despliegue} resume la secuencia de comandos ejecutada.
+
+\begin{lstlisting}[language=bash,caption={Secuencia de despliegue de los manifiestos},label=lst:despliegue]
+# 1) Recursos base: namespace, secretos y configuración
+kubectl apply -f k8s/00-namespace.yaml
+kubectl apply -f k8s/01-secrets.yaml
+kubectl apply -f k8s/02-configmap.yaml
+
+# 2) ConfigMap con el init.sql y los seeds (carpeta completa)
+kubectl create configmap mysql-initdb \
+  --from-file=mysql-init/ \
+  -n conjunta-desarrollo-seguro
+
+# 3) Base de datos (esperar a que quede disponible)
+kubectl apply -f k8s/03-mysql.yaml
+kubectl rollout status deploy/mysql -n conjunta-desarrollo-seguro
+
+# 4) Backend, frontend e Ingress
+kubectl apply -f k8s/04-backend.yaml
+kubectl apply -f k8s/05-frontend.yaml
+kubectl apply -f k8s/06-ingress.yaml
+\end{lstlisting}
+
+La Figura \ref{fig:apply1} muestra la creación de los recursos base, en la que el namespace, el Secret y el ConfigMap se aplicaron sin error. La Figura \ref{fig:apply2} presenta la creación del ConfigMap de inicialización, el despliegue de MySQL con su PersistentVolumeClaim y la confirmación del \textit{rollout} de la base de datos. La Figura \ref{fig:apply3} recoge la aplicación del backend, el frontend y el Ingress, con la creación de sus respectivos Deployments, Services y del recurso \texttt{inventrack-ingress}.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1\linewidth]{Despliegue_1.png}
+  \caption{Creación de los recursos base: namespace, Secret y ConfigMap.}
+  \label{fig:apply1}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1\linewidth]{Despliegue_2.png}
+  \caption{ConfigMap de inicialización y despliegue de la base de datos MySQL.}
+  \label{fig:apply2}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1\linewidth]{Despliegue_3.png}
+  \caption{Despliegue del backend, el frontend y el Ingress.}
+  \label{fig:apply3}
+\end{figure}
+
+\subsection{Incidencia durante el Despliegue: ImagePullBackOff}
+\label{sec:incidencia}
+
+Tras aplicar los manifiestos, los pods del backend y del frontend no alcanzaron el estado \texttt{Running}, sino que quedaron en \texttt{ImagePullBackOff}, mientras que la base de datos operó con normalidad. La Figura \ref{fig:pullbackoff} muestra este estado, en el que los Deployments \texttt{backend} y \texttt{frontend} reportaron cero réplicas disponibles. La causa se identificó en los registros del backend, presentados en la Figura \ref{fig:logspull}, donde el mensaje indicó que el contenedor fallaba al intentar descargar la imagen (\textit{trying and failing to pull image}).
+
+El origen del problema fue que las imágenes \texttt{inventrack-backend:1.0} e \texttt{inventrack-frontend:1.0} existían en el demonio de Docker del equipo anfitrión, pero no dentro del demonio de Minikube. Como los Deployments declararon la política \texttt{imagePullPolicy: IfNotPresent} y las imágenes no estaban presentes en el clúster, el \textit{kubelet} intentó descargarlas de un registro público (Docker Hub), donde no existen, y la descarga fue rechazada. En consecuencia, el Ingress no dispuso de destinos sanos para el backend ni para el frontend, por lo que respondió con el código \texttt{503 Service Temporarily Unavailable}, tal como se observa en la Figura \ref{fig:curl503}.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1\linewidth]{Verificacion_1.png}
+  \caption{Pods del backend y el frontend en estado \texttt{ImagePullBackOff}.}
+  \label{fig:pullbackoff}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1\linewidth]{Verificacion_3.png}
+  \caption{Registros del backend con el fallo de descarga de la imagen.}
+  \label{fig:logspull}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1\linewidth]{Verificacion_2.png}
+  \caption{Respuesta \texttt{503} del Ingress y estado de los PersistentVolumeClaim.}
+  \label{fig:curl503}
+\end{figure}
+
+La solución consistió en cargar las imágenes en el demonio de Minikube con \texttt{minikube image load}, según la secuencia del Listado \ref{lst:buildload}, y reiniciar los Deployments afectados para que el \textit{kubelet} volviera a crear los pods con las imágenes ya presentes en el clúster. El Listado \ref{lst:fix} detalla los comandos aplicados. Una vez presentes las imágenes, la política \texttt{IfNotPresent} evitó cualquier intento de descarga externa y los pods alcanzaron el estado \texttt{Running}.
+
+\begin{lstlisting}[language=bash,caption={Resolución de la incidencia ImagePullBackOff},label=lst:fix]
+# Cargar las imágenes ausentes en el clúster
+minikube image load inventrack-backend:1.0
+minikube image load inventrack-frontend:1.0
+
+# Reiniciar los Deployments para recrear los pods
+kubectl rollout restart deployment/backend deployment/frontend \
+  -n conjunta-desarrollo-seguro
 \end{lstlisting}
 
 \subsection{Evidencia: Recursos en Kubernetes}
+
+Una vez resuelta la incidencia, se verificó el estado del clúster. La Figura \ref{fig:kubectlall} presenta la salida de \texttt{kubectl get all}, en la que los cuatro pods (backend, dos réplicas de frontend y MySQL) aparecen en estado \texttt{Running} y los Deployments reportan la totalidad de sus réplicas disponibles. Los ReplicaSet anteriores constan con cero réplicas, lo que corresponde a las versiones reemplazadas durante el reinicio de los Deployments.
+
 \begin{figure}[H]
   \centering
-  % \includegraphics[width=0.9\textwidth]{kubectl_get_all.png}
-  \caption{Pods, Services e Ingress en ejecución (\texttt{kubectl get all}).}
+  \includegraphics[width=1\linewidth]{kubectl_get_all.png}
+  \caption{Pods, Services y Deployments en ejecución tras la resolución.}
   \label{fig:kubectlall}
 \end{figure}
 
-\subsection{Evidencia: Aplicación en el Navegador}
+La verificación se completó con la consulta de los recursos de red y de almacenamiento, junto con una petición al extremo de salud de la API. La Figura \ref{fig:ingresspvc} muestra que \texttt{inventrack-ingress} quedó asociado al dominio \texttt{conjunta3p.espe.edu.ec} y a la dirección \texttt{192.168.49.2}, y que ambos volúmenes (\texttt{mysql-pvc} y \texttt{uploads-pvc}) constan como \texttt{Bound}. Asimismo, la petición \texttt{curl} a la ruta \texttt{/api/health} devolvió el código \texttt{200} y un cuerpo en formato JSON que indicó el estado \texttt{ok} y el mensaje de la API en funcionamiento, lo que confirmó que el backend respondía correctamente a través del Ingress.
+
 \begin{figure}[H]
   \centering
-  % \includegraphics[width=0.9\textwidth]{navegador_dominio.png}
+  \includegraphics[width=1\linewidth]{verificacion_ingress.png}
+  \caption{Recursos Ingress y PVC, y respuesta \texttt{200} del extremo \texttt{/api/health}.}
+  \label{fig:ingresspvc}
+\end{figure}
+
+\subsection{Evidencia: Aplicación en el Navegador}
+
+El acceso final se validó desde el navegador con la dirección \texttt{http://conjunta3p.espe.edu.ec}. La Figura \ref{fig:navegador} muestra la pantalla de inicio de sesión de InvenTrack servida bajo el dominio, lo que confirmó el funcionamiento conjunto del frontend, del backend y del enrutamiento del Ingress. De este modo, el despliegue quedó accesible y operativo en el clúster.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{navegador_dominio.png}
   \caption{InvenTrack accesible bajo el dominio \texttt{conjunta3p.espe.edu.ec}.}
   \label{fig:navegador}
 \end{figure}

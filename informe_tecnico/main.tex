@@ -129,7 +129,7 @@ Repositorio GitHub (manifiestos \texttt{.yml}): \url{https://github.com/IMarcusD
 %=====================================================================
 \section{Dockerización de Componentes}
 
-La containerización del sistema InvenTrack se organizó en tres componentes independientes: el backend (API REST en Node.js/Express), el frontend (aplicación React construida con Vite) y la base de datos MySQL. Para cada componente se definió una estrategia de empaquetado acorde con su función. El backend y el frontend se construyeron a partir de un \texttt{Dockerfile} propio, mientras que la base de datos se apoyó en la imagen oficial de MySQL 8.0, configurada por variables de entorno y volúmenes. En todos los casos se partió de imágenes base Alpine, que reducen el tamaño de la imagen resultante. A continuación se describen los Dockerfiles de cada componente y las decisiones de construcción aplicadas.
+La containerización del sistema InvenTrack se organizó en tres componentes independientes: el backend (API REST en Node.js/Express), el frontend (aplicación React construida con Vite) y la base de datos MySQL. Para cada componente se definió una estrategia de empaquetado acorde con su función. El backend y el frontend se construyeron a partir de un \texttt{Dockerfile} propio, mientras que la base de datos se apoyó en la imagen oficial de MySQL 8.0, configurada por variables de entorno y volúmenes. En todos los casos se partió de imágenes base Alpine, que reducen el tamaño de la imagen resultante. A continuación se describen los Dockerfiles de cada componente y las decisiones de construcción aplicadas. Los términos técnicos de Docker y Kubernetes que aparecen en este informe se definen en el Glosario (Apéndice A), que puede consultarse para una mayor comprensión de los conceptos.
 
 \subsection{Backend (Node.js/Express)}
 
@@ -196,15 +196,185 @@ La construcción y el arranque de los tres contenedores se validaron con el coma
 %=====================================================================
 \section{Manifiestos de Kubernetes}
 
+El despliegue de InvenTrack en Kubernetes se definió mediante un conjunto de manifiestos en formato YAML. Los archivos se numeraron del \texttt{00} al \texttt{06} para fijar el orden de aplicación, de modo que los recursos base (namespace, secretos y configuraciones) existieran antes que los componentes que dependen de ellos. Cada archivo agrupó los recursos de una misma categoría: el namespace, los Secrets, los ConfigMaps, la base de datos MySQL con su volumen, el backend, el frontend y el Ingress. Esta separación permitió aplicar los manifiestos de forma ordenada con \texttt{kubectl apply}. A continuación se describe cada tipo de recurso y las decisiones de configuración aplicadas. El significado de cada objeto y parámetro de Kubernetes citado puede consultarse en el Glosario (Apéndice A).
+
 \subsection{Namespaces}
+
+Todos los recursos de InvenTrack se agruparon en un namespace propio llamado \texttt{conjunta-desarrollo-seguro}, cuya definición se presenta en el Listado \ref{lst:namespace}. El namespace proporcionó un aislamiento dentro del clúster, de manera que los objetos del sistema quedaron separados de otras cargas de trabajo. Cada manifiesto posterior declaró de forma explícita este namespace en su campo \texttt{metadata}, lo que evitó que los recursos se crearan en el espacio \texttt{default}. Con ello se logró que la eliminación del namespace bastara para retirar por completo el despliegue.
+
+\begin{lstlisting}[caption={Definición del Namespace (00-namespace.yaml)},label=lst:namespace]
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: conjunta-desarrollo-seguro
+\end{lstlisting}
 
 \subsection{Deployments y Services}
 
+El sistema se estructuró en tres Deployments, uno por componente, cada uno acompañado de un Service de tipo \texttt{ClusterIP} que expuso el recurso solo dentro del clúster. La Tabla \ref{tab:deployments} resume las características principales de cada Deployment. El frontend se configuró con dos réplicas para tolerar la caída de un pod, mientras que el backend y la base de datos operaron con una sola réplica, dado que MySQL escribe sobre un volumen que no admite acceso concurrente desde varios pods.
+
+\begin{table}[H]
+  \centering
+  \caption{Resumen de los Deployments de InvenTrack}
+  \label{tab:deployments}
+  \begin{tabularx}{\textwidth}{l l c c X}
+    \toprule
+    \textbf{Deployment} & \textbf{Imagen} & \textbf{Réplicas} & \textbf{Puerto} & \textbf{Service} \\
+    \midrule
+    mysql    & \texttt{mysql:8.0}             & 1 & 3306 & ClusterIP \\
+    backend  & \texttt{inventrack-backend:1.0}  & 1 & 4000 & ClusterIP \\
+    frontend & \texttt{inventrack-frontend:1.0} & 2 & 80   & ClusterIP \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+El Deployment del backend, mostrado en el Listado \ref{lst:backend}, incorporó varias medidas de seguridad y de disponibilidad. Un \texttt{securityContext} obligó a que el contenedor se ejecutara como usuario sin privilegios (UID y GID 1001) y con \texttt{runAsNonRoot}, en concordancia con el usuario creado en el Dockerfile. Además, se deshabilitó el montaje automático del token de la cuenta de servicio (\texttt{automountServiceAccountToken: false}) para reducir la superficie de ataque en caso de intrusión. Un \textit{initContainer} llamado \texttt{wait-for-mysql} retrasó el arranque del backend hasta que la base de datos respondiera, y las sondas \texttt{readinessProbe} y \texttt{livenessProbe} sobre la ruta \texttt{/api/health} permitieron a Kubernetes verificar el estado del proceso. Las variables de entorno se inyectaron desde el ConfigMap y el Secret, sin valores en texto plano dentro del manifiesto.
+
+\begin{lstlisting}[caption={Deployment y Service del backend (04-backend.yaml)},label=lst:backend]
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: conjunta-desarrollo-seguro
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: backend }
+  template:
+    metadata:
+      labels: { app: backend }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      initContainers:
+        - name: wait-for-mysql
+          image: mysql:8.0
+          command:
+            - sh
+            - -c
+            - |
+              until mysqladmin ping -h mysql --silent; do
+                echo "esperando a mysql..."; sleep 2;
+              done
+      containers:
+        - name: backend
+          image: inventrack-backend:1.0
+          ports:
+            - containerPort: 4000
+          env:
+            - name: DB_HOST
+              valueFrom: { configMapKeyRef: { name: inventrack-config, key: DB_HOST } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: inventrack-secrets, key: DB_PASSWORD } }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: inventrack-secrets, key: JWT_SECRET } }
+          readinessProbe:
+            httpGet: { path: /api/health, port: 4000 }
+          livenessProbe:
+            httpGet: { path: /api/health, port: 4000 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: conjunta-desarrollo-seguro
+spec:
+  type: ClusterIP
+  selector: { app: backend }
+  ports:
+    - port: 4000
+      targetPort: 4000
+\end{lstlisting}
+
+Los Deployments de la base de datos y del frontend siguieron un patrón similar. En ambos casos se deshabilitó el token de la cuenta de servicio y se definieron límites de CPU y memoria, con el fin de evitar el consumo excesivo de recursos. El frontend, al servir contenido estático mediante Nginx, requirió menos recursos y solo una sonda de disponibilidad sobre la ruta raíz. Cada Service asoció su selector de etiquetas con los pods correspondientes, lo que permitió que los componentes se comunicaran por nombre de servicio (\texttt{mysql}, \texttt{backend} y \texttt{frontend}) dentro del clúster.
+
 \subsection{ConfigMaps y Secrets}
+
+La configuración del sistema se separó en dos tipos de recursos según su confidencialidad. Los parámetros no confidenciales se almacenaron en el ConfigMap \texttt{inventrack-config}, presentado en el Listado \ref{lst:configmap}, que definió el puerto del backend, el nombre del host de la base de datos, el usuario y el nombre de la base. Adicionalmente, un segundo ConfigMap (\texttt{mysql-initdb}) contuvo el archivo \texttt{init.sql} con el esquema y los datos iniciales, y se montó en el directorio de inicialización de la imagen de MySQL. De este modo, la información de configuración quedó desacoplada del código y de las imágenes.
+
+\begin{lstlisting}[caption={ConfigMap de configuración (02-configmap.yaml)},label=lst:configmap]
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inventrack-config
+  namespace: conjunta-desarrollo-seguro
+data:
+  PORT: "4000"
+  DB_HOST: "mysql"
+  DB_USER: "root"
+  DB_NAME: "inventrack"
+\end{lstlisting}
+
+Los datos confidenciales se aislaron en el Secret \texttt{inventrack-secrets}, mostrado en el Listado \ref{lst:secret}, que agrupó la contraseña de la base de datos, la clave de firma de los tokens JWT y la clave de la API de Groq. El Secret se definió como \texttt{Opaque} y se empleó el campo \texttt{stringData} (véase el Apéndice A para la definición de ambos términos), que Kubernetes codifica en base64 al persistirlo. Conviene señalar que esta codificación no constituye un cifrado, por lo que los valores mostrados son de ejemplo y, en un entorno de producción, deberían gestionarse con un sistema de secretos dedicado. Tanto el ConfigMap como el Secret se consumieron mediante referencias \texttt{configMapKeyRef} y \texttt{secretKeyRef} en las variables de entorno de los contenedores, de manera que ningún valor confidencial apareció en los manifiestos de los Deployments.
+
+\begin{lstlisting}[caption={Secret con credenciales (01-secrets.yaml)},label=lst:secret]
+apiVersion: v1
+kind: Secret
+metadata:
+  name: inventrack-secrets
+  namespace: conjunta-desarrollo-seguro
+type: Opaque
+stringData:
+  DB_PASSWORD: "password"
+  JWT_SECRET: "jwt_secret"
+  GROQ_API_KEY: "groq_api_key"
+\end{lstlisting}
 
 \subsection{PersistentVolumeClaim (PVC)}
 
+La persistencia de datos se resolvió con dos PersistentVolumeClaim, de modo que la información sobreviviera al reinicio o a la recreación de los pods. El primero, \texttt{mysql-pvc}, solicitó 2 Gi de almacenamiento y se montó en \texttt{/var/lib/mysql} para conservar la base de datos. El segundo, \texttt{uploads-pvc}, solicitó 1 Gi y se montó en \texttt{/app/uploads} del backend para almacenar las imágenes de producto que gestiona Multer. Ambos volúmenes utilizaron el modo de acceso \texttt{ReadWriteOnce}, tal como se muestra en el Listado \ref{lst:pvc}. Por esta razón, el Deployment de MySQL adoptó la estrategia de actualización \texttt{Recreate}, que detiene el pod anterior antes de crear el nuevo y evita que dos pods intenten escribir sobre el mismo volumen de forma simultánea.
+
+\begin{lstlisting}[caption={PersistentVolumeClaim de la base de datos (03-mysql.yaml)},label=lst:pvc]
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc
+  namespace: conjunta-desarrollo-seguro
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+\end{lstlisting}
+
 \subsection{Ingress}
+
+El acceso externo a InvenTrack se canalizó mediante un único recurso Ingress, denominado \texttt{inventrack-ingress}, cuya definición se presenta en el Listado \ref{lst:ingress}. Este recurso empleó la clase \texttt{nginx} y publicó la aplicación bajo el dominio \texttt{conjunta3p.espe.edu.ec}. El enrutamiento se definió por rutas: las peticiones a \texttt{/api} y a \texttt{/uploads} se dirigieron al Service del backend en el puerto 4000, mientras que el resto de las rutas se enviaron al Service del frontend en el puerto 80. De esta forma, un solo punto de entrada atendió tanto la interfaz de usuario como la API. La anotación \texttt{proxy-body-size} se fijó en \texttt{10m} para permitir la carga de imágenes de producto sin exceder el límite por defecto del controlador Ingress.
+
+\begin{lstlisting}[caption={Definición del Ingress (06-ingress.yaml)},label=lst:ingress]
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: inventrack-ingress
+  namespace: conjunta-desarrollo-seguro
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: conjunta3p.espe.edu.ec
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: backend, port: { number: 4000 } }
+          - path: /uploads
+            pathType: Prefix
+            backend:
+              service: { name: backend, port: { number: 4000 } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: frontend, port: { number: 80 } }
+\end{lstlisting}
 
 %=====================================================================
 % 3. DESPLIEGUE EN CLÚSTER Y CONFIGURACIÓN DE INGRESS (10%)
@@ -436,7 +606,70 @@ La construcción y el arranque de los tres contenedores se validaron con el coma
 % APÉNDICES
 %=====================================================================
 \appendix
-\section{Apéndice A: Evidencias Adicionales}
+\section{Apéndice A: Glosario de Términos Técnicos}
+
+Este apéndice reúne la definición y la finalidad de los términos, comandos y objetos de Docker y Kubernetes que se mencionan a lo largo del informe. Su propósito es que el lector que no esté familiarizado con estas tecnologías pueda consultar aquí el significado de cada concepto antes de revisar las secciones técnicas. La Tabla \ref{tab:glosario} presenta los términos en orden alfabético, junto con una breve explicación de para qué sirven en el contexto del despliegue de InvenTrack.
+
+\begin{longtable}{@{}p{0.26\textwidth}p{0.66\textwidth}@{}}
+  \caption{Glosario de términos técnicos empleados en el informe}
+  \label{tab:glosario} \\
+  \toprule
+  \textbf{Término} & \textbf{Definición y finalidad} \\
+  \midrule
+  \endfirsthead
+  \multicolumn{2}{c}{\tablename\ \thetable{} — continuación} \\
+  \toprule
+  \textbf{Término} & \textbf{Definición y finalidad} \\
+  \midrule
+  \endhead
+  \midrule
+  \multicolumn{2}{r}{\textit{Continúa en la página siguiente}} \\
+  \endfoot
+  \bottomrule
+  \endlastfoot
+
+  \texttt{automount-} \texttt{ServiceAccountToken} & Opción de un pod que controla si se monta de forma automática el token de la cuenta de servicio de Kubernetes dentro del contenedor. Al fijarla en \texttt{false} se evita exponer ese token, lo que reduce la superficie de ataque si un contenedor es comprometido. \\
+  Alpine & Distribución de Linux minimalista que se usa como imagen base de contenedores. Su tamaño reducido disminuye el peso de la imagen final y su superficie de exposición. \\
+  Base64 & Esquema que representa datos binarios como texto. Kubernetes almacena los Secrets en base64, pero conviene aclarar que se trata de una codificación reversible y no de un cifrado. \\
+  bcrypt & Función de derivación de hash diseñada para almacenar contraseñas de forma segura, con un factor de costo que dificulta los ataques de fuerza bruta. \\
+  ClusterIP & Tipo de Service que expone un conjunto de pods únicamente dentro del clúster, sin acceso directo desde el exterior. \\
+  ConfigMap & Objeto de Kubernetes que almacena parámetros de configuración no sensibles en pares clave-valor, desacoplados del código y de las imágenes. \\
+  Deployment & Objeto de Kubernetes que gestiona un conjunto de réplicas de pods y controla su creación, actualización y recuperación. \\
+  Docker & Plataforma de containerización que empaqueta una aplicación y sus dependencias en una imagen ejecutable de forma aislada. \\
+  Dockerfile & Archivo de texto con las instrucciones para construir una imagen de contenedor de manera reproducible. \\
+  Docker Compose & Herramienta que define y orquesta varios contenedores relacionados a partir de un único archivo de configuración. \\
+  Groq & Proveedor de inferencia de modelos de lenguaje que el asistente de InvenTrack utiliza para procesar consultas en lenguaje natural. \\
+  Healthcheck & Comprobación periódica que verifica si un contenedor funciona de forma correcta, empleada para condicionar el arranque de otros servicios. \\
+  Imagen & Plantilla inmutable a partir de la cual se crean los contenedores, que incluye el sistema de archivos y las dependencias de la aplicación. \\
+  Ingress & Objeto de Kubernetes que gestiona el acceso HTTP y HTTPS externo al clúster, con enrutamiento por host y por ruta hacia los Services internos. \\
+  \texttt{ingressClassName} & Campo del Ingress que indica qué controlador Ingress (por ejemplo, Nginx) debe atender las reglas definidas. \\
+  initContainer & Contenedor que se ejecuta y finaliza antes del contenedor principal de un pod, empleado para preparar condiciones previas como esperar a que la base de datos esté disponible. \\
+  JWT & Sigla de JSON Web Token. Token firmado que transporta la identidad del usuario y se usa para autenticar las peticiones a la API. \\
+  Kubernetes & Plataforma de orquestación que automatiza el despliegue, el escalado y la gestión de aplicaciones en contenedores. \\
+  livenessProbe & Sonda que Kubernetes utiliza para detectar si un contenedor sigue operativo. Si falla, el contenedor se reinicia. \\
+  Multer & Middleware de Node.js que procesa la carga de archivos, empleado en InvenTrack para las imágenes de producto. \\
+  Multi-stage build & Técnica de construcción de imágenes en varias etapas, que descarta las herramientas de compilación en la imagen final para reducir su tamaño. \\
+  Namespace & Partición lógica dentro de un clúster de Kubernetes que aísla y agrupa los recursos de una misma aplicación. \\
+  Nginx & Servidor web y proxy inverso, utilizado para servir el frontend estático y como controlador de Ingress. \\
+  \texttt{npm ci --omit=dev} & Comando que instala las dependencias exactas declaradas en el proyecto y omite las de desarrollo, de modo que la imagen incorpore solo lo necesario para producción. \\
+  Opaque & Tipo genérico de Secret en Kubernetes, destinado a almacenar datos sensibles arbitrarios como pares clave-valor. Es el tipo por defecto cuando la información no corresponde a un formato predefinido. \\
+  PersistentVolumeClaim (PVC) & Solicitud de almacenamiento persistente que un pod reclama al clúster, de forma que los datos sobreviven al reinicio o la recreación del pod. \\
+  Pod & Unidad mínima de despliegue en Kubernetes, que agrupa uno o varios contenedores que comparten red y almacenamiento. \\
+  \texttt{proxy-body-size} & Anotación del Ingress de Nginx que define el tamaño máximo del cuerpo de una petición, ajustada para permitir la carga de imágenes. \\
+  readinessProbe & Sonda que indica a Kubernetes cuándo un contenedor está listo para recibir tráfico. \\
+  ReadWriteOnce & Modo de acceso de un volumen que permite su montaje en lectura y escritura desde un solo nodo a la vez. \\
+  Recreate & Estrategia de actualización de un Deployment que elimina los pods anteriores antes de crear los nuevos, para evitar el acceso concurrente a un mismo volumen. \\
+  Réplica & Cada una de las copias de un pod que ejecuta un Deployment, empleadas para aumentar la disponibilidad y distribuir la carga. \\
+  \texttt{runAsNonRoot} & Ajuste del \texttt{securityContext} que obliga a ejecutar el contenedor con un usuario distinto de root, con lo que se limita el impacto de una intrusión. \\
+  securityContext & Sección del manifiesto que define los privilegios y permisos de seguridad con los que se ejecuta un pod o contenedor. \\
+  Secret & Objeto de Kubernetes que almacena datos sensibles, como contraseñas y claves, de forma separada de la configuración general. \\
+  Service & Objeto de Kubernetes que ofrece un punto de acceso estable, por nombre y dirección, a un conjunto de pods. \\
+  \texttt{stringData} & Campo del Secret que permite escribir los valores en texto claro dentro del manifiesto; Kubernetes los codifica en base64 al persistirlos. \\
+  Vite & Herramienta de construcción del frontend que genera la versión estática de producción de la aplicación React. \\
+  Volumen & Almacenamiento montado en uno o varios contenedores, que puede ser efímero o persistente según su tipo. \\
+\end{longtable}
+
+\section{Apéndice B: Evidencias Adicionales}
 % Capturas de pantalla, logs extensos o payloads completos.
 % >>> LLENAR (opcional) <<<
 

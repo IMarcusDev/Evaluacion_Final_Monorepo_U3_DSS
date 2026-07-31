@@ -1,0 +1,152 @@
+apiVersion: v1
+data:
+    init.sql: "CREATE DATABASE  IF NOT EXISTS `inventrack` /*!40100 DEFAULT CHARACTER
+        SET utf8mb4 COLLATE utf8mb4_unicode_ci */ /*!80016 DEFAULT ENCRYPTION='N' */;\nUSE
+        `inventrack`;\n-- MySQL dump 10.13  Distrib 8.0.46, for Win64 (x86_64)\n--\n--
+        Host: localhost    Database: inventrack\n-- ------------------------------------------------------\n--
+        Server version\t8.0.46\n\n/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT
+        */;\n/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;\n/*!40101
+        SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;\n/*!50503 SET NAMES utf8
+        */;\n/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;\n/*!40103 SET TIME_ZONE='+00:00'
+        */;\n/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;\n/*!40014
+        SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;\n/*!40101
+        SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;\n/*!40111 SET
+        @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;\n\n--\n-- Table structure for table
+        `auditoria`\n--\n\nDROP TABLE IF EXISTS `auditoria`;\n/*!40101 SET @saved_cs_client
+        \    = @@character_set_client */;\n/*!50503 SET character_set_client = utf8mb4
+        */;\nCREATE TABLE `auditoria` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `usuario_id`
+        int DEFAULT NULL,\n  `accion` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,\n
+        \ `tabla_afectada` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,\n  `registro_id`
+        int DEFAULT NULL,\n  `detalle` text COLLATE utf8mb4_unicode_ci,\n  `created_at`
+        timestamp NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  KEY `usuario_id`
+        (`usuario_id`),\n  CONSTRAINT `auditoria_ibfk_1` FOREIGN KEY (`usuario_id`) REFERENCES
+        `usuarios` (`id`) ON DELETE SET NULL\n) ENGINE=InnoDB AUTO_INCREMENT=68 DEFAULT
+        CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;\n/*!40101 SET character_set_client
+        = @saved_cs_client */;\n\n--\n-- Table structure for table `categorias`\n--\n\nDROP
+        TABLE IF EXISTS `categorias`;\n/*!40101 SET @saved_cs_client     = @@character_set_client
+        */;\n/*!50503 SET character_set_client = utf8mb4 */;\nCREATE TABLE `categorias`
+        (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `nombre` varchar(100) COLLATE utf8mb4_unicode_ci
+        NOT NULL,\n  `descripcion` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,\n
+        \ `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n
+        \ UNIQUE KEY `nombre` (`nombre`)\n) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8mb4
+        COLLATE=utf8mb4_unicode_ci;\n/*!40101 SET character_set_client = @saved_cs_client
+        */;\n\n--\n-- Table structure for table `historial_precios`\n--\n\nDROP TABLE
+        IF EXISTS `historial_precios`;\n/*!40101 SET @saved_cs_client     = @@character_set_client
+        */;\n/*!50503 SET character_set_client = utf8mb4 */;\nCREATE TABLE `historial_precios`
+        (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `producto_id` int NOT NULL,\n  `usuario_id`
+        int DEFAULT NULL,\n  `precio_compra_anterior` decimal(10,2) DEFAULT NULL,\n  `precio_compra_nuevo`
+        decimal(10,2) DEFAULT NULL,\n  `precio_venta_anterior` decimal(10,2) DEFAULT NULL,\n
+        \ `precio_venta_nuevo` decimal(10,2) DEFAULT NULL,\n  `created_at` timestamp NULL
+        DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  KEY `producto_id` (`producto_id`),\n
+        \ KEY `usuario_id` (`usuario_id`),\n  CONSTRAINT `historial_precios_ibfk_1` FOREIGN
+        KEY (`producto_id`) REFERENCES `productos` (`id`) ON DELETE CASCADE,\n  CONSTRAINT
+        `historial_precios_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`)
+        ON DELETE SET NULL\n) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;\n/*!40101
+        SET character_set_client = @saved_cs_client */;\n\n--\n-- Table structure for
+        table `movimientos`\n--\n\nDROP TABLE IF EXISTS `movimientos`;\n/*!40101 SET @saved_cs_client
+        \    = @@character_set_client */;\n/*!50503 SET character_set_client = utf8mb4
+        */;\nCREATE TABLE `movimientos` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `producto_id`
+        int NOT NULL,\n  `usuario_id` int NOT NULL,\n  `tipo` enum('entrada','salida')
+        COLLATE utf8mb4_unicode_ci NOT NULL,\n  `cantidad` int NOT NULL,\n  `stock_anterior`
+        int NOT NULL,\n  `stock_nuevo` int NOT NULL,\n  `motivo` varchar(255) COLLATE
+        utf8mb4_unicode_ci DEFAULT NULL,\n  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,\n
+        \ PRIMARY KEY (`id`),\n  KEY `producto_id` (`producto_id`),\n  KEY `usuario_id`
+        (`usuario_id`),\n  CONSTRAINT `movimientos_ibfk_1` FOREIGN KEY (`producto_id`)
+        REFERENCES `productos` (`id`) ON DELETE CASCADE,\n  CONSTRAINT `movimientos_ibfk_2`
+        FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`) ON DELETE RESTRICT\n)
+        ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;\n/*!40101
+        SET character_set_client = @saved_cs_client */;\n\n--\n-- Table structure for
+        table `productos`\n--\n\nDROP TABLE IF EXISTS `productos`;\n/*!40101 SET @saved_cs_client
+        \    = @@character_set_client */;\n/*!50503 SET character_set_client = utf8mb4
+        */;\nCREATE TABLE `productos` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `sku`
+        varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,\n  `nombre` varchar(150) COLLATE
+        utf8mb4_unicode_ci NOT NULL,\n  `descripcion` text COLLATE utf8mb4_unicode_ci,\n
+        \ `categoria_id` int DEFAULT NULL,\n  `proveedor_id` int DEFAULT NULL,\n  `precio_compra`
+        decimal(10,2) NOT NULL DEFAULT '0.00',\n  `precio_venta` decimal(10,2) NOT NULL
+        DEFAULT '0.00',\n  `stock_actual` int NOT NULL DEFAULT '0',\n  `stock_minimo`
+        int NOT NULL DEFAULT '5',\n  `ubicacion` varchar(100) COLLATE utf8mb4_unicode_ci
+        DEFAULT NULL,\n  `imagen_url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT
+        NULL,\n  `activo` tinyint(1) DEFAULT '1',\n  `created_at` timestamp NULL DEFAULT
+        CURRENT_TIMESTAMP,\n  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON
+        UPDATE CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  UNIQUE KEY `sku` (`sku`),\n
+        \ KEY `categoria_id` (`categoria_id`),\n  KEY `proveedor_id` (`proveedor_id`),\n
+        \ CONSTRAINT `productos_ibfk_1` FOREIGN KEY (`categoria_id`) REFERENCES `categorias`
+        (`id`) ON DELETE SET NULL,\n  CONSTRAINT `productos_ibfk_2` FOREIGN KEY (`proveedor_id`)
+        REFERENCES `proveedores` (`id`) ON DELETE SET NULL\n) ENGINE=InnoDB AUTO_INCREMENT=25
+        DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;\n/*!40101 SET character_set_client
+        = @saved_cs_client */;\n\n--\n-- Table structure for table `proveedores`\n--\n\nDROP
+        TABLE IF EXISTS `proveedores`;\n/*!40101 SET @saved_cs_client     = @@character_set_client
+        */;\n/*!50503 SET character_set_client = utf8mb4 */;\nCREATE TABLE `proveedores`
+        (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `nombre` varchar(150) COLLATE utf8mb4_unicode_ci
+        NOT NULL,\n  `contacto` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,\n
+        \ `telefono` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,\n  `email` varchar(150)
+        COLLATE utf8mb4_unicode_ci DEFAULT NULL,\n  `direccion` varchar(255) COLLATE utf8mb4_unicode_ci
+        DEFAULT NULL,\n  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY
+        KEY (`id`)\n) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;\n/*!40101
+        SET character_set_client = @saved_cs_client */;\n\n--\n-- Table structure for
+        table `usuarios`\n--\n\nDROP TABLE IF EXISTS `usuarios`;\n/*!40101 SET @saved_cs_client
+        \    = @@character_set_client */;\n/*!50503 SET character_set_client = utf8mb4
+        */;\nCREATE TABLE `usuarios` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `nombre`
+        varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,\n  `email` varchar(150) COLLATE
+        utf8mb4_unicode_ci NOT NULL,\n  `password` varchar(255) COLLATE utf8mb4_unicode_ci
+        NOT NULL,\n  `rol` enum('admin','almacenero') COLLATE utf8mb4_unicode_ci NOT NULL
+        DEFAULT 'almacenero',\n  `activo` tinyint(1) DEFAULT '1',\n  `created_at` timestamp
+        NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  UNIQUE KEY `email` (`email`)\n)
+        ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;\n/*!40101
+        SET character_set_client = @saved_cs_client */;\n/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE
+        */;\n\n/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;\n/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS
+        */;\n/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;\n/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT
+        */;\n/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;\n/*!40101
+        SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;\n/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES
+        */;\n\n-- Dump completed on 2026-07-18 18:19:39\n"
+    seed_01_electronica.sql: |
+        USE `inventrack`;
+        SET NAMES utf8mb4;
+
+        -- --- Usuarios (ids 1-2) ---------------------------------------------
+        INSERT INTO `usuarios` (`id`, `nombre`, `email`, `password`, `rol`, `activo`) VALUES
+          (1, 'Marta Salcedo', 'admin.tecno@inventrack.com',  '$2b$10$qXd6.Om7q7bz2osmyRl.p.GnV.TgONmLls31L5YLjwzIvY7yW80Fa', 'admin',      1),
+          (2, 'Luis Farfán',   'bodega.tecno@inventrack.com', '$2b$10$DP0eziSe/5WZrBTC8IyKE.qpigyQ4TMMrT0XRg0fVI2FGYrh4oCLe', 'almacenero', 1);
+
+        -- --- Categorías (ids 1-3) -------------------------------------------
+        INSERT INTO `categorias` (`id`, `nombre`, `descripcion`) VALUES
+          (1, 'Electrónica',  'Dispositivos y componentes electrónicos'),
+          (2, 'Periféricos',  'Accesorios y periféricos de cómputo'),
+          (3, 'Redes',        'Equipos de conectividad y networking');
+
+        -- --- Proveedores (ids 1-2) ------------------------------------------
+        INSERT INTO `proveedores` (`id`, `nombre`, `contacto`, `telefono`, `email`, `direccion`) VALUES
+          (1, 'TechSupply SAC',   'Carlos Ramos',  '987654321', 'ventas@techsupply.com',    'Av. Javier Prado 1234, Lima'),
+          (2, 'RedesGlobal EIRL', 'Rosa Mendoza',  '987001122', 'contacto@redesglobal.com', 'Jr. Cusco 456, Lima');
+
+        -- --- Productos (ids 1-6) --------------------------------------------
+        -- Nota: TEC-006 queda con stock por debajo del mínimo (alerta de stock bajo).
+        INSERT INTO `productos`
+          (`id`, `sku`, `nombre`, `descripcion`, `categoria_id`, `proveedor_id`, `precio_compra`, `precio_venta`, `stock_actual`, `stock_minimo`, `ubicacion`) VALUES
+          (1, 'TEC-001', 'Mouse Inalámbrico Logitech M185', 'Mouse óptico inalámbrico 2.4GHz',        2, 1,  25.00,  45.00,  60, 10, 'Estante A-1'),
+          (2, 'TEC-002', 'Teclado Mecánico Redragon K552',  'Teclado mecánico switch red RGB',       2, 1,  80.00, 150.00,  28,  8, 'Estante A-2'),
+          (3, 'TEC-003', 'Monitor LED 24" Samsung',         'Monitor Full HD 1920x1080 75Hz',        1, 1, 450.00, 650.00,  18,  5, 'Estante A-3'),
+          (4, 'TEC-004', 'Router WiFi TP-Link Archer C6',   'Router dual band AC1200',               3, 2, 120.00, 199.00,  22,  6, 'Estante B-1'),
+          (5, 'TEC-005', 'Switch 8 Puertos TP-Link',        'Switch Gigabit no administrable',       3, 2,  95.00, 160.00,  14,  5, 'Estante B-2'),
+          (6, 'TEC-006', 'SSD 480GB Kingston A400',         'Unidad de estado sólido SATA III',      1, 1, 140.00, 210.00,   3, 12, 'Estante C-1');
+
+        -- --- Movimientos (kardex, ids 1-4) ----------------------------------
+        INSERT INTO `movimientos`
+          (`producto_id`, `usuario_id`, `tipo`, `cantidad`, `stock_anterior`, `stock_nuevo`, `motivo`) VALUES
+          (1, 2, 'entrada', 40, 20, 60, 'Reposición de inventario inicial'),
+          (2, 2, 'entrada', 30,  0, 30, 'Compra a TechSupply SAC'),
+          (2, 1, 'salida',   2, 30, 28, 'Venta mostrador'),
+          (6, 2, 'salida',   9, 12,  3, 'Salida por venta corporativa');
+
+        -- --- Historial de precios (id 1) ------------------------------------
+        INSERT INTO `historial_precios`
+          (`producto_id`, `usuario_id`, `precio_compra_anterior`, `precio_compra_nuevo`, `precio_venta_anterior`, `precio_venta_nuevo`) VALUES
+          (3, 1, 430.00, 450.00, 620.00, 650.00);
+
+        -- --- Auditoría (traza de la carga) ----------------------------------
+        INSERT INTO `auditoria` (`usuario_id`, `accion`, `tabla_afectada`, `registro_id`, `detalle`) VALUES
+          (1, 'seed', 'productos', NULL, 'Carga inicial escenario TecnoStore (seed_01)');
+kind: ConfigMap
+metadata:
+    name: mysql-initdb
+    namespace: inventrack-prod

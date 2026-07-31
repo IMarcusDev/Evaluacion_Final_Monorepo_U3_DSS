@@ -619,25 +619,120 @@ La auditoría se llevó a cabo en el marco académico de la asignatura Desarroll
 
 %----------------------- FASE 2 -----------------------
 \subsection{Fase 2: Recopilación de Inteligencia (Intelligence Gathering) — 8\%}
-% Información pasiva y activa: puertos, rutas de Ingress, cabeceras HTTP, tecnologías.
 
-\subsubsection{Mapeo de Puertos (Nmap)}
-\begin{lstlisting}[language=bash,caption={Comando Nmap ejecutado},label=lst:nmap]
-# nmap -sV -p- conjunta3p.espe.edu.ec
-# >>> PEGAR COMANDO Y RESULTADO <<<
+Esta fase enumeró la superficie del objetivo: puertos expuestos por el nodo, tecnologías del servidor web, cabeceras HTTP y rutas del Ingress. Los comandos se enlistaron de manera individual pero en la ejecución se condensaron en un script para evitar la ejecución manual de cada uno de los comandos uno a uno, el script los ejecutó de forma automatizada por secciones desde Kali Linux. Los listados siguientes muestran los comandos aplicados; las figuras muestran las salidas obtenidas al correr el script.
+
+Antes del escaneo se resolvió un problema de conectividad. La máquina virtual Kali, al ser una máquina virtual, no alcanzaba la red interna del clúster de Minikube (\texttt{192.168.49.2}), accesible solo desde el equipo local. Como solución, se reenvió el puerto 80 local (\texttt{192.168.1.50}) hacia el Ingress con \texttt{socat}, y en Kali se asoció el dominio a esa dirección en el archivo \texttt{/etc/hosts}. El Listado \ref{lst:socat} muestra ambos comandos y la Figura \ref{fig:resolucion} confirma la resolución del dominio y la respuesta 200.
+
+\begin{lstlisting}[language=bash,caption={Puente de red entre Kali y el Ingress de Minikube},label=lst:socat]
+# En el equipo anfitrion: reenvio del puerto 80 hacia el Ingress
+sudo socat TCP-LISTEN:80,fork,reuseaddr,bind=192.168.1.50 TCP:192.168.49.2:80
+
+# En Kali: resolucion del dominio hacia el anfitrion
+echo "192.168.1.50  conjunta3p.espe.edu.ec" | sudo tee -a /etc/hosts
 \end{lstlisting}
+
 \begin{figure}[H]
   \centering
-  % \includegraphics[width=0.9\textwidth]{nmap.png}
-  \caption{Resultado del escaneo de puertos con Nmap.}
-  \label{fig:nmap}
+  \includegraphics[width=0.85\linewidth]{00_resolucion.png}
+  \caption{Resolución del dominio y respuesta del extremo de salud desde Kali.}
+  \label{fig:resolucion}
 \end{figure}
 
-\subsubsection{Detección de Tecnologías (WhatWeb / Wappalyzer)}
-% >>> LLENAR + captura <<<
+\subsubsection{Mapeo de Puertos (Nmap)}
+
+Se ejecutó Nmap para determinar qué puertos expone el nodo y confirmar que la única superficie externa es el Ingress en el puerto 80, sin exponer el backend (4000), MySQL (3306) ni el frontend (5173). El Listado \ref{lst:nmap} recoge los comandos.
+
+\begin{lstlisting}[language=bash,caption={Comandos de mapeo de puertos con Nmap},label=lst:nmap]
+# Descubrimiento de todos los puertos TCP del nodo
+nmap -p- -T4 -Pn conjunta3p.espe.edu.ec -oN nmap_puertos.txt
+
+# Versión de servicios y scripts por defecto sobre el Ingress
+nmap -sV -sC -p 80 -Pn conjunta3p.espe.edu.ec -oN nmap_version.txt
+
+# Scripts de reconocimiento HTTP sobre el Ingress
+nmap --script "http-headers,http-methods,http-title" -p 80 -Pn \
+  conjunta3p.espe.edu.ec -oN nmap_http.txt
+\end{lstlisting}
+
+El escaneo completo de puertos (Figura \ref{fig:nmap-puertos}) devolvió el puerto 80 como único servicio de InvenTrack. Los puertos 139, 445 y 1716 pertenecen a servicios del propio equipo local (SMB y KDE Connect) y no a la aplicación, mientras que el backend (4000) y MySQL (3306) no aparecieron expuestos. La Figura \ref{fig:nmap-version} identificó el servicio del puerto 80 como \texttt{nginx (reverse proxy)} con título \texttt{InvenTrack}, y la Figura \ref{fig:nmap-http} muestra las cabeceras, los métodos y el título HTTP.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\linewidth]{01_nmap_puertos.png}
+  \caption{Escaneo completo de puertos TCP con Nmap.}
+  \label{fig:nmap-puertos}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\linewidth]{02_nmap_version.png}
+  \caption{Detección de versión del servicio del puerto 80.}
+  \label{fig:nmap-version}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\linewidth]{03_nmap_http.png}
+  \caption{Scripts de reconocimiento HTTP sobre el Ingress.}
+  \label{fig:nmap-http}
+\end{figure}
+
+\subsubsection{Detección de Tecnologías (WhatWeb)}
+
+Se ejecutó WhatWeb para identificar el servidor web del Ingress y las tecnologías del frontend. El Listado \ref{lst:whatweb} muestra el comando.
+
+\begin{lstlisting}[language=bash,caption={Comando de detección de tecnologías con WhatWeb},label=lst:whatweb]
+whatweb -v -a 3 http://conjunta3p.espe.edu.ec
+\end{lstlisting}
+
+WhatWeb (Figuras \ref{fig:whatweb1} y \ref{fig:whatweb2}) confirmó el servidor Nginx y el título \texttt{InvenTrack}, detectó HTML5 y señaló como cabeceras presentes \texttt{X-Frame-Options}, \texttt{X-Content-Type-Options} y \texttt{Referrer-Policy}.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{04_whatweb_1.png}
+  \caption{Reporte de WhatWeb: tecnologías y cabeceras detectadas.}
+  \label{fig:whatweb1}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{04_whatweb_2.png}
+  \caption{Reporte de WhatWeb (continuación).}
+  \label{fig:whatweb2}
+\end{figure}
 
 \subsubsection{Cabeceras HTTP y Rutas de Ingress}
-% >>> LLENAR + captura <<<
+
+Se ejecutaron peticiones con curl para inspeccionar las cabeceras de respuesta del frontend y de la API, y para confirmar el enrutamiento por ruta del Ingress hacia el backend (\texttt{/api}, \texttt{/uploads}) y el frontend (\texttt{/}). El Listado \ref{lst:cabeceras} recoge los comandos.
+
+\begin{lstlisting}[language=bash,caption={Comandos de inspección de cabeceras y rutas},label=lst:cabeceras]
+# Cabeceras del frontend servido en la raíz
+curl -sI http://conjunta3p.espe.edu.ec/
+
+# Cabeceras de la API a través del Ingress
+curl -sI http://conjunta3p.espe.edu.ec/api/health
+
+# Confirmación del enrutamiento por ruta del Ingress
+curl -s http://conjunta3p.espe.edu.ec/api/health
+curl -s -o /dev/null -w "%{http_code}\n" http://conjunta3p.espe.edu.ec/uploads/
+\end{lstlisting}
+
+La revisión de cabeceras (Figura \ref{fig:cabeceras}) mostró una diferencia entre el frontend y la API. El frontend, servido por Nginx en la raíz, incluyó \texttt{X-Frame-Options}, \texttt{X-Content-Type-Options} y \texttt{Referrer-Policy}. La API bajo \texttt{/api}, en cambio, respondió sin esas cabeceras y expuso \texttt{X-Powered-By: Express} y \texttt{Access-Control-Allow-Origin: *}, lo que reveló que la API no tiene una protección contra el mapeo de las tecnologías utilizadas y además cuenta con una política de CORS abierta. La Figura \ref{fig:rutas} confirma el enrutamiento del Ingress: \texttt{/api/health} devolvió el JSON de estado y \texttt{/uploads/} respondió con código 404, sin listado de directorio.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\linewidth]{05_cabeceras.png}
+  \caption{Cabeceras HTTP del frontend y de la API.}
+  \label{fig:cabeceras}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\linewidth]{06_rutas.png}
+  \caption{Enrutamiento del Ingress hacia la API y \texttt{/uploads}.}
+  \label{fig:rutas}
+\end{figure}
 
 %----------------------- FASE 3 -----------------------
 \subsection{Fase 3: Modelado de Amenazas (Threat Modeling) — 7\%}

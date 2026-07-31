@@ -736,26 +736,40 @@ La revisión de cabeceras (Figura \ref{fig:cabeceras}) mostró una diferencia en
 
 %----------------------- FASE 3 -----------------------
 \subsection{Fase 3: Modelado de Amenazas (Threat Modeling) — 7\%}
-% Activos críticos, vectores de ataque y superficies de exposición.
 
-\begin{table}[H]
+El modelado de amenazas se apoyó en el Diagrama de Flujo de Datos (DFD) de la Figura \ref{fig:dfd}, que representa las entidades externas, los procesos, y las bases de datos y el límite de confianza del sistema. Los flujos que cruzan un límite de confianza concentran el mayor riesgo. El flujo del usuario hacia el Ingress, transporta credenciales y tokens sobre HTTP sin cifrado, y su respuesta devuelve el token JWT y los datos por el mismo canal sin cifrar. El flujo del backend hacia la API de Groq, remite datos del inventario a un tercero. La Tabla \ref{tab:threatmodel} resume, para cada activo, el vector de ataque y la superficie de exposición.
+
+\begin{figure}[H]
   \centering
+  \includegraphics[width=\linewidth]{modelado_amenazas.png}
+  \caption{Diagrama de Flujo de Datos (DFD) para el modelado de amenazas de InvenTrack.}
+  \label{fig:dfd}
+\end{figure}
+
+\begin{longtable}{@{}p{0.16\textwidth} p{0.45\textwidth} p{0.29\textwidth}@{}}
   \caption{Matriz de modelado de amenazas de InvenTrack}
-  \label{tab:threatmodel}
-  \begin{tabularx}{\textwidth}{l X X}
-    \toprule
-    \textbf{Activo} & \textbf{Vector de Ataque} & \textbf{Superficie de Exposición} \\
-    \midrule
-    % >>> LLENAR las celdas de cada fila <<<
-    API REST         & & \\
-    Autenticación JWT & & \\
-    Carga de archivos (Multer) & & \\
-    Carga masiva Excel/CSV & & \\
-    Chatbot (Groq)   & & \\
-    Base de datos MySQL & & \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
+  \label{tab:threatmodel} \\
+  \toprule
+  \textbf{Activo} & \textbf{Vector de Ataque} & \textbf{Superficie de Exposición} \\
+  \midrule
+  \endfirsthead
+  \multicolumn{3}{c}{\tablename\ \thetable{} — continuación} \\
+  \toprule
+  \textbf{Activo} & \textbf{Vector de Ataque} & \textbf{Superficie de Exposición} \\
+  \midrule
+  \endhead
+  \midrule
+  \multicolumn{3}{r}{\textit{Continúa en la página siguiente}} \\
+  \endfoot
+  \bottomrule
+  \endlastfoot
+  API REST & Registro público que toma el \texttt{rol} del cuerpo (escalada a admin), CORS abierto, divulgación de tecnología (\texttt{X-Powered-By}) y endpoints informativos sin autenticación (\texttt{/api/db-test}). & Ingress \texttt{/api/*} en HTTP; varios endpoints accesibles sin token. \\
+  Autenticación JWT & Secreto de firma débil que permite crear un token de administrador; prueba del algoritmo \texttt{none}. & Token HS256 en la cabecera \texttt{Authorization}, firmado con \texttt{JWT\_SECRET} de entorno. \\
+  Carga de archivos (Multer) & Tipo MIME validado en el cliente y extensión tomada del nombre original, lo que admite subir un archivo manipulado. & \texttt{POST /api/productos/imagen} (JWT); archivos servidos en \texttt{/uploads}. \\
+  Carga masiva Excel/CSV & Archivo con contenido no confiable (fórmulas, volumen elevado) procesado por la librería de hojas de cálculo. & \texttt{POST /api/productos/carga-masiva} (JWT y \texttt{soloAdmin}). \\
+  Chatbot (Groq) & Inyección de instrucciones y fuga del contexto (datos reales del inventario) al enviar el mensaje del usuario al modelo. & \texttt{POST /api/asistente/preguntar} (JWT, cualquier rol); flujo hacia Groq. \\
+  Base de datos MySQL & Inyección SQL (mitigada por parametrización), exposición de credenciales. & Service \texttt{ClusterIP} interno; no alcanzable desde el exterior en Kubernetes. \\
+\end{longtable}
 
 %----------------------- FASE 4 -----------------------
 \subsection{Fase 4: Análisis de Vulnerabilidades (Vulnerability Analysis) — 12\%}

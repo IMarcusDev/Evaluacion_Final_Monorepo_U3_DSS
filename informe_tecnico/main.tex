@@ -394,14 +394,14 @@ El despliegue de InvenTrack se realizó sobre un clúster local de Kubernetes ge
 
 El clúster se levantó con Minikube 1.38.1 sobre un equipo con Arch Linux, empleando el controlador de Docker (\textit{driver} \texttt{docker}) y el mismo Docker como entorno de ejecución de contenedores. Se configuró un único nodo con rol de plano de control, que ejecutó la versión 1.35.1 de Kubernetes y quedó accesible en la dirección \texttt{192.168.49.2}. Esta topología de un solo nodo resultó suficiente para el alcance del entregable, ya que reprodujo el comportamiento de un clúster real sin la complejidad de una instalación multinodo.
 
-Dado que Minikube utiliza un demonio de Docker propio, aislado del demonio del sistema anfitrión, las imágenes construidas en el equipo no estuvieron disponibles de forma automática dentro del clúster. Por esta razón, tras construir las imágenes del backend y del frontend se cargaron de manera explícita en Minikube con el comando \texttt{minikube image load}. El Listado \ref{lst:buildload} presenta la secuencia aplicada. Este paso fue determinante, puesto que su omisión provocó la incidencia descrita en la subsección \emph{Incidencia durante el Despliegue: ImagePullBackOff}.
+Dado que Minikube utiliza un daemon de Docker propio, aislado del daemon del sistema anfitrión, las imágenes construidas en el equipo no estuvieron disponibles de forma automática dentro del clúster. Por esta razón, tras construir las imágenes del backend y del frontend se cargaron de manera explícita en Minikube con el comando \texttt{minikube image load}. El Listado \ref{lst:buildload} presenta la secuencia aplicada. Este paso fue determinante, puesto que su omisión provocó la incidencia descrita en la subsección \emph{Incidencia durante el Despliegue: ImagePullBackOff}.
 
 \begin{lstlisting}[language=bash,caption={Construcción y carga de las imágenes en Minikube},label=lst:buildload]
 # Construir las imágenes con el Docker del host
 docker build -t inventrack-backend:1.0 ./backend
 docker build -t inventrack-frontend:1.0 ./frontend
 
-# Cargar las imágenes dentro del demonio de Minikube
+# Cargar las imágenes dentro del daemon de Minikube
 minikube image load inventrack-backend:1.0
 minikube image load inventrack-frontend:1.0
 
@@ -498,7 +498,7 @@ La Figura \ref{fig:apply1} muestra la creación de los recursos base, en la que 
 
 Tras aplicar los manifiestos, los pods del backend y del frontend no alcanzaron el estado \texttt{Running}, sino que quedaron en \texttt{ImagePullBackOff}, mientras que la base de datos operó con normalidad. La Figura \ref{fig:pullbackoff} muestra este estado, en el que los Deployments \texttt{backend} y \texttt{frontend} reportaron cero réplicas disponibles. La causa se identificó en los registros del backend, presentados en la Figura \ref{fig:logspull}, donde el mensaje indicó que el contenedor fallaba al intentar descargar la imagen (\textit{trying and failing to pull image}).
 
-El origen del problema fue que las imágenes \texttt{inventrack-backend:1.0} e \texttt{inventrack-frontend:1.0} existían en el demonio de Docker del equipo anfitrión, pero no dentro del demonio de Minikube. Como los Deployments declararon la política \texttt{imagePullPolicy: IfNotPresent} y las imágenes no estaban presentes en el clúster, el \textit{kubelet} intentó descargarlas de un registro público (Docker Hub), donde no existen, y la descarga fue rechazada. En consecuencia, el Ingress no dispuso de destinos sanos para el backend ni para el frontend, por lo que respondió con el código \texttt{503 Service Temporarily Unavailable}, tal como se observa en la Figura \ref{fig:curl503}.
+El origen del problema fue que las imágenes \texttt{inventrack-backend:1.0} e \texttt{inventrack-frontend:1.0} existían en el daemon de Docker del equipo anfitrión, pero no dentro del daemon de Minikube. Como los Deployments declararon la política \texttt{imagePullPolicy: IfNotPresent} y las imágenes no estaban presentes en el clúster, el \textit{kubelet} intentó descargarlas de un registro público (Docker Hub), donde no existen, y la descarga fue rechazada. En consecuencia, el Ingress no dispuso de destinos sanos para el backend ni para el frontend, por lo que respondió con el código \texttt{503 Service Temporarily Unavailable}, tal como se observa en la Figura \ref{fig:curl503}.
 
 \begin{figure}[H]
   \centering
@@ -521,7 +521,7 @@ El origen del problema fue que las imágenes \texttt{inventrack-backend:1.0} e \
   \label{fig:curl503}
 \end{figure}
 
-La solución consistió en cargar las imágenes en el demonio de Minikube con \texttt{minikube image load}, según la secuencia del Listado \ref{lst:buildload}, y reiniciar los Deployments afectados para que el \textit{kubelet} volviera a crear los pods con las imágenes ya presentes en el clúster. El Listado \ref{lst:fix} detalla los comandos aplicados. Una vez presentes las imágenes, la política \texttt{IfNotPresent} evitó cualquier intento de descarga externa y los pods alcanzaron el estado \texttt{Running}.
+La solución consistió en cargar las imágenes en el daemon de Minikube con \texttt{minikube image load}, según la secuencia del Listado \ref{lst:buildload}, y reiniciar los Deployments afectados para que el \textit{kubelet} volviera a crear los pods con las imágenes ya presentes en el clúster. El Listado \ref{lst:fix} detalla los comandos aplicados. Una vez presentes las imágenes, la política \texttt{IfNotPresent} evitó cualquier intento de descarga externa y los pods alcanzaron el estado \texttt{Running}.
 
 \begin{lstlisting}[language=bash,caption={Resolución de la incidencia ImagePullBackOff},label=lst:fix]
 # Cargar las imágenes ausentes en el clúster
@@ -1048,41 +1048,59 @@ La escalada lograda en la Fase 5 otorga el conjunto completo de capacidades de a
 
 %----------------------- FASE 7 -----------------------
 \subsection{Fase 7: Reporte (Reporting) — 5\%}
-% Hallazgos clasificados por severidad (CVSS), evidencias y recomendaciones.
 
 \subsubsection{Clasificación de Hallazgos por Severidad}
-\begin{table}[H]
-  \centering
+
+La Tabla \ref{tab:hallazgos} consolida los hallazgos de todas las fases, ordenados por severidad según la puntuación CVSS v3.1.
+
+\begin{longtable}{@{}p{0.07\textwidth} p{0.57\textwidth} p{0.09\textwidth} p{0.14\textwidth}@{}}
   \caption{Hallazgos clasificados por severidad CVSS}
-  \label{tab:hallazgos}
-  \begin{tabularx}{\textwidth}{l X l l}
-    \toprule
-    \textbf{ID} & \textbf{Hallazgo} & \textbf{CVSS} & \textbf{Severidad} \\
-    \midrule
-    % >>> LLENAR las celdas de cada fila <<<
-    H-01 & & & \\
-    H-02 & & & \\
-    H-03 & & & \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
+  \label{tab:hallazgos} \\
+  \toprule
+  \textbf{ID} & \textbf{Hallazgo} & \textbf{CVSS} & \textbf{Severidad} \\
+  \midrule
+  \endfirsthead
+  \multicolumn{4}{c}{\tablename\ \thetable{} — continuación} \\
+  \toprule
+  \textbf{ID} & \textbf{Hallazgo} & \textbf{CVSS} & \textbf{Severidad} \\
+  \midrule
+  \endhead
+  \midrule
+  \multicolumn{4}{r}{\textit{Continúa en la página siguiente}} \\
+  \endfoot
+  \bottomrule
+  \endlastfoot
+  H-01 & Escalada de privilegios por registro abierto con rol arbitrario & 9.8 & Crítica \\
+  H-02 & Secreto de firma JWT débil que permite crear un token de administrador & 8.1 & Alta \\
+  H-03 & Inyección de instrucciones (prompt injection) en el chatbot & 6.5 & Media \\
+  H-04 & Comunicación sin cifrar (HTTP), sin \texttt{HSTS} & 5.9 & Media \\
+  H-05 & Política de CORS totalmente abierta (\texttt{Access-Control-Allow-Origin: *}) & 5.3 & Media \\
+  H-06 & Enumeración de usuarios en el registro y el login & 5.3 & Media \\
+  H-07 & Ausencia de cabeceras de seguridad en la API y de \texttt{Content-Security-Policy} & 4.3 & Media \\
+  H-08 & Validación de subida de archivos basada en el tipo MIME del cliente & 4.3 & Media \\
+  H-09 & Divulgación de información en \texttt{/api/db-test} & 3.7 & Baja \\
+  H-10 & Divulgación de tecnología mediante \texttt{X-Powered-By: Express} & 3.1 & Baja \\
+\end{longtable}
 
 \subsubsection{Validación de Controles de Seguridad}
-% Rate limiting, bcrypt, JWT, verificación de sesión cada 5s.
-% Documentar cuáles resultaron efectivos y cuáles fallidos.
+
+La Tabla \ref{tab:controles} recoge los controles de seguridad presentes en InvenTrack y el resultado de su validación durante la auditoría.
+
 \begin{table}[H]
   \centering
   \caption{Validación de controles de seguridad de InvenTrack}
   \label{tab:controles}
-  \begin{tabularx}{\textwidth}{l X l}
+  \begin{tabularx}{\textwidth}{p{0.26\textwidth} X X}
     \toprule
-    \textbf{Control} & \textbf{Prueba Realizada} & \textbf{Resultado} \\
+    \textbf{Control} & \textbf{Prueba realizada} & \textbf{Resultado} \\
     \midrule
-    % >>> LLENAR las celdas de cada fila <<<
-    Rate limiting & & \\
-    Hasheo bcrypt & & \\
-    Tokens JWT & & \\
-    Verificación de sesión (5s) & & \\
+    Rate limiting del login & Fuerza bruta con bucle de curl & Efectivo (\texttt{429} al superar 3 intentos por 5 minutos) \\
+    Hasheo bcrypt & Inspección de la API y de la base de datos & Efectivo (sin fuga del hash; \texttt{\$2b\$10\$}, costo 10) \\
+    Tokens JWT & Análisis con \texttt{jwt\_tool} y revisión del secreto & Parcial (mecanismo válido, secreto de firma débil: H-02) \\
+    Autorización por rol (\texttt{soloAdmin}) & Acceso con un rol \texttt{almacenero} & Efectivo (\texttt{403} en las rutas restringidas) \\
+    Parametrización SQL (\texttt{mysql2}) & sqlmap dirigido al login & Efectivo (endpoint no inyectable) \\
+    Verificación de cuenta activa & Revisión del middleware de autenticación & Efectivo (se comprueba en cada petición) \\
+    Aislamiento de MySQL (\texttt{ClusterIP}) & Escaneo de puertos con Nmap & Efectivo (puerto 3306 no expuesto) \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -1093,13 +1111,21 @@ La escalada lograda en la Fase 5 otorga el conjunto completo de capacidades de a
 \section{Conclusiones y Recomendaciones}
 
 \subsection{Conclusiones}
-% >>> LLENAR <<<
+
+La evaluación permitió consolidar competencias de containerización, orquestación con Kubernetes y pruebas de penetración sobre un mismo sistema. Como logro principal, InvenTrack quedó desplegado y accesible bajo el dominio institucional, y se completaron las siete fases de la metodología PTES con evidencia real obtenida contra el clúster en ejecución. El proceso dejó como aprendizaje que un despliegue funcional no equivale a un despliegue seguro, y que la seguridad debe verificarse de forma activa en lugar de asumirse.
+
+Durante el despliegue ocurrieron dos incidencias que dejaron aprendizajes sobre el aislamiento de red. La primera fue el estado \texttt{ImagePullBackOff} de los pods del backend y del frontend, originado porque las imágenes construidas en el Docker del anfitrión no estaban disponibles en el daemon propio de Minikube; se resolvió cargándolas con \texttt{minikube image load} y reiniciando los despliegues. La segunda surgió en la auditoría: Kali, al ser una máquina virtual, no alcanzaba la red interna del clúster (\texttt{192.168.49.2}); se resolvió reenviando el puerto 80 de la dirección local hacia el Ingress con \texttt{socat} y resolviendo el dominio en Kali mediante \texttt{/etc/hosts}. Ambos casos evidenciaron la necesidad de comprender la separación entre el local, Minikube y la máquina virtual antes de operar sobre el clúster.
+
+En el plano de la seguridad, el hallazgo más grave fue la escalada de privilegios por el registro abierto, que otorga un rol de administrador a cualquier visitante sin autenticación previa (CVSS 9.8), agravado por un secreto de firma JWT débil. Las pruebas también aportaron lecciones metodológicas. El límite de intentos de inicio de sesión, además de proteger el login, interfirió con la automatización, ya que sqlmap se detuvo ante la respuesta \texttt{401} y la fuerza bruta devolvió siempre \texttt{429}. Nikto generó falsos positivos al interpretar la aplicación como de tipo una página única, y la inyección de instrucciones en el chatbot no pudo demostrarse en vivo por el uso de una clave de Groq, lo que obligó a documentarla por análisis de código.
 
 \subsection{Recomendaciones de Mejora para InvenTrack}
 \begin{itemize}
-  \item % >>> LLENAR: recomendaciones accionables <<<
-  \item
-  \item
+  \item Habilitar TLS en el Ingress para servir la aplicación por HTTPS y añadir la cabecera \texttt{Strict-Transport-Security}.
+  \item Restringir la política de CORS a una lista de orígenes de confianza en lugar de un todo.
+  \item Incorporar cabeceras de seguridad en la API mediante \texttt{helmet} (\texttt{Content-Security-Policy}, \texttt{X-Frame-Options}, \texttt{X-Content-Type-Options} y \texttt{Referrer-Policy}) y desactivar la cabecera \texttt{X-Powered-By}.
+  \item Normalizar las respuestas del registro y del login para impedir la enumeración de usuarios.
+  \item Retirar o proteger el endpoint \texttt{/api/db-test} y evitar devolver el mensaje de error interno de la base de datos.
+  \item Validar las subidas de archivos por su contenido real y no por el tipo MIME declarado por el cliente, y sanear el nombre y la extensión.
 \end{itemize}
 
 %=====================================================================
@@ -1173,9 +1199,5 @@ Este apéndice reúne la definición y la finalidad de los términos, comandos y
   Vite & Herramienta de construcción del frontend que genera la versión estática de producción de la aplicación React. \\
   Volumen & Almacenamiento montado en uno o varios contenedores, que puede ser efímero o persistente según su tipo. \\
 \end{longtable}
-
-\section{Apéndice B: Evidencias Adicionales}
-% Capturas de pantalla, logs extensos o payloads completos.
-% >>> LLENAR (opcional) <<<
 
 \end{document}

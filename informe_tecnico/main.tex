@@ -109,6 +109,10 @@
 \section{Introducción}
 El presente informe detalla el proceso de containerización, despliegue en un clúster de Kubernetes y auditoría de seguridad del sistema InvenTrack. Se documentan los pasos realizados para la creación de contenedores Docker para los componentes del sistema (backend, frontend y base de datos), la configuración de manifiestos de Kubernetes, el despliegue en un clúster local, y la configuración del Ingress para exponer la aplicación bajo el dominio \texttt{conjunta3p.espe.edu.ec}. Además, se presenta un análisis de seguridad siguiendo la metodología PTES (Penetration Testing Execution Standard), incluyendo la recopilación de inteligencia, modelado de amenazas, análisis de vulnerabilidades, explotación y post-explotación, así como las conclusiones y recomendaciones derivadas del proceso.
 
+La metodología PTES constituye un estándar para la ejecución de pruebas de penetración que organiza el proceso en siete fases sucesivas: interacciones preliminares, recopilación de inteligencia, modelado de amenazas, análisis de vulnerabilidades, explotación, post-explotación y reporte. Su uso permitió de modo que cada prueba respondió a un objetivo definido. En está evaluación, las siete fases se aplicaron sobre el despliegue en Kubernetes, con el Ingress como único punto de entrada al sistema.
+
+Las pruebas de penetración se realizaron con autorización dentro de un entorno local. El sistema evaluado es propiedad del autor Geovanny Cudco y se desplegó de forma local en un clúster de Minikube. De este modo, las actividades descritas en la sección de auditoría se ejecutaron en el marco académico de la asignatura, sobre infraestructura propia y bajo condiciones que aseguraron que ninguna acción alcanzara a entornos ajenos.
+
 \subsection{Objetivo General}
 
 El objetivo general de esta evaluación es realizar un despliegue seguro del sistema InvenTrack en un clúster de Kubernetes, asegurando la correcta containerización de sus componentes y evaluando su seguridad mediante pruebas de penetración siguiendo la metodología PTES. 
@@ -564,23 +568,54 @@ El acceso final se validó desde el navegador con la dirección \texttt{http://c
 % 4. AUDITORÍA DE SEGURIDAD — PENTESTING PTES (60%)
 %=====================================================================
 \section{Auditoría de Seguridad: Pentesting con Metodología PTES}
-% Introducción al proceso de pentesting sobre InvenTrack con Kali Linux.
+
+La auditoría de seguridad de InvenTrack se estructuró conforme a las siete fases de la metodología PTES (Penetration Testing Execution Standard), desde las interacciones preliminares hasta el reporte final. Las pruebas se ejecutaron desde una estación Kali Linux contra el único punto de entrada del sistema desplegado en Kubernetes, es decir, el Ingress publicado bajo el dominio \texttt{conjunta3p.espe.edu.ec}. El conjunto de herramientas propio de una auditoría genérica se ajustó a la superficie real del objetivo, de modo que se conservaron solo las coherentes con su arquitectura (una API REST sobre MySQL tras un único Ingress) y se descartaron las orientadas a componentes que el sistema no posee. Cada fase se documenta con los comandos aplicados, la evidencia obtenida y su interpretación.
 
 %----------------------- FASE 1 -----------------------
 \subsection{Fase 1: Interacciones Preliminares (Pre-engagement) — 5\%}
 % Alcance, objetivos, restricciones, reglas de juego y autorizaciones.
 
 \subsubsection{Alcance del Pentesting}
-% >>> LLENAR <<<
+
+El sistema admite dos topologías de despliegue: una basada en Docker Compose, donde cada servicio publica su puerto al equipo anfitrión, y otra basada en Kubernetes con un Ingress como puerta de enlace. La auditoría se dirigió a la topología de Kubernetes que quedo desplegada bajo el dominio \texttt{conjunta3p.espe.edu.ec} en el paso anterior. La única superficie accesible desde el exterior fue el Ingress en HTTP sobre el puerto 80, mientras que la base de datos MySQL, expuesta como Service de tipo \texttt{ClusterIP}, no es alcanzable desde fuera del clúster.
+
+Dentro del alcance se incluyeron el Ingress \texttt{http://conjunta3p.espe.edu.ec}, la API bajo el prefijo \texttt{/api/*} servida por el backend Express y la aplicación de página única servida en la ruta raíz. También se incluyó la lógica de negocio del sistema, compuesta por la autenticación mediante JWT, la autorización por rol (\texttt{admin} y \texttt{almacenero}), el registro de usuarios, el asistente basado en inteligencia artificial, la carga de imágenes mediante Multer y la carga masiva de productos por Excel o CSV. De igual modo, se incorporó al alcance la validación de los controles de seguridad ya implementados, entre ellos el límite de intentos de inicio de sesión, el hasheo con bcrypt, la verificación de la cuenta activa en cada petición y la parametrización de las consultas SQL.
+
+Fuera del alcance quedaron el acceso directo a la base de datos MySQL, por tratarse de un Service interno no publicado al exterior, y la infraestructura del proveedor externo Groq, ya que solo se evaluó el extremo local \texttt{/api/asistente} y no el servicio de terceros al que este recurre. Dado que el despliegue empleó una clave de Groq, la evaluación del asistente se basará en el análisis del código y en el comportamiento observable del endpoint, sin una explotación activa del modelo de lenguaje. Asimismo, se excluyeron el nodo y el plano de control de Kubernetes, salvo la verificación de los puertos que exponen, y las pruebas de denegación de servicio o de estrés, con el fin de no colapasar mi entorno local. Finalmente, el análisis de la capa de transporte seguro se dejó fuera de alcance, dado que el Ingress se configuró en HTTP y no expuso un puerto 443 sobre el que aplicar dichas pruebas.
 
 \subsubsection{Objetivos y Reglas de Juego}
-% >>> LLENAR <<<
+
+El objetivo de la auditoría consistió en evaluar la postura de seguridad del despliegue de InvenTrack en Kubernetes, identificar las vulnerabilidades explotables desde el Ingress y verificar la efectividad de los controles de seguridad presentes en el sistema. Como resultado del proceso se busca obtener un conjunto de hallazgos clasificados por severidad según el estándar CVSS, junto con las recomendaciones de mejora correspondientes.
+
+La auditoría se realizó sobre un entorno local y autorizado, cuyo objetivo resolvió a la dirección privada \texttt{192.168.49.2} del clúster de Minikube. La cantidad de esfuerzo de las herramientas se modero debido a las limitaciones del entorno. Las herramientas de escaneo se ejecutaron desde la maquina virtual Kali Linux.
 
 \subsubsection{Activos a Probar}
-% API backend, MySQL, JWT, chatbot IA. >>> LLENAR <<<
+
+La definición de los activos a proteger permitió orientar las pruebas hacia los componentes de mayor valor para el sistema. La Tabla \ref{tab:activos} resume dichos activos, su ubicación dentro de la arquitectura y la amenaza principal asociada a cada uno. Conviene señalar que la base de datos MySQL se incluye como activo a proteger, pero su acceso directo desde el exterior quedó fuera del alcance externo, por su condición de Service interno del clúster.
+
+\begin{table}[H]
+  \centering
+  \caption{Activos a proteger de InvenTrack}
+  \label{tab:activos}
+  \begin{tabularx}{\textwidth}{l X X}
+    \toprule
+    \textbf{Activo} & \textbf{Ubicación} & \textbf{Amenaza principal} \\
+    \midrule
+    Credenciales y hashes de usuarios & Tabla \texttt{usuarios} (bcrypt) & Fuga del hash a través de la API de usuarios \\
+    Tokens JWT & Firmados en HS256 con \texttt{JWT\_SECRET} & Secreto débil que permite la creación de tokens; algoritmo \texttt{none} \\
+    Rol de usuario (\texttt{admin} / \texttt{almacenero}) & Claim del JWT y columna \texttt{rol} & Escalada de privilegios por el registro abierto \\
+    Inventario, kardex y auditoría & Tablas de negocio & Acceso indebido a objetos directos y sin el rol adecuado \\
+    Contexto del asistente de IA & System prompt con datos reales del inventario & Inyección de instrucciones (prompt injection) y fuga del contexto \\
+    Archivos subidos & Volumen \texttt{uploads} y ruta \texttt{/uploads} & Carga de archivos con tipo MIME falsificable \\
+    Secretos de entorno & Objeto Secret de Kubernetes & \texttt{JWT\_SECRET}, \texttt{GROQ\_API\_KEY} y \texttt{DB\_PASSWORD} en base64 (no cifrado) \\
+    Base de datos MySQL & Contenedor \texttt{mysql} (ClusterIP) & Fuera de alcance externo; protegida por aislamiento del clúster \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
 \subsubsection{Autorización}
-% Declaración de autorización para la prueba. >>> LLENAR <<<
+
+La auditoría se llevó a cabo en el marco académico de la asignatura Desarrollo de Software Seguro, sobre un sistema de propiedad del autor Geovanny Cudco y desplegado en un entorno local. El objetivo se ejecutó sobre un clúster de Minikube en un equipo con Arch Linux, con resolución del dominio. En consecuencia, todas las pruebas se realizaron con autorización expresa dentro de este entorno controlado, sin que ninguna acción alcanzara a terceros ni a servicios ajenos al alcance definido.
 
 %----------------------- FASE 2 -----------------------
 \subsection{Fase 2: Recopilación de Inteligencia (Intelligence Gathering) — 8\%}

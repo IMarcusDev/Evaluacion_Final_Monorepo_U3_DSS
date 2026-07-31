@@ -773,21 +773,69 @@ El modelado de amenazas se apoyó en el Diagrama de Flujo de Datos (DFD) de la F
 
 %----------------------- FASE 4 -----------------------
 \subsection{Fase 4: Análisis de Vulnerabilidades (Vulnerability Analysis) — 12\%}
-% Escaneo automatizado y manual: Nikto, OWASP ZAP, Burp Suite, Nuclei.
+
+El análisis combinó dos escáneres automatizados sobre el Ingress (Nikto y Nuclei).
 
 \subsubsection{Escaneo con Nikto}
-\begin{lstlisting}[language=bash,caption={Comando Nikto ejecutado},label=lst:nikto]
-# nikto -h https://conjunta3p.espe.edu.ec
-# >>> PEGAR COMANDO Y RESULTADO <<<
+
+Se ejecutó Nikto para detectar cabeceras ausentes, métodos peligrosos y archivos por defecto sobre el objetivo HTTP. El Listado \ref{lst:nikto} recoge el comando.
+
+\begin{lstlisting}[language=bash,caption={Comando de escaneo con Nikto},label=lst:nikto]
+nikto -h http://conjunta3p.espe.edu.ec
 \end{lstlisting}
 
-\subsubsection{Escaneo con OWASP ZAP / Burp Suite}
-% >>> LLENAR + capturas <<<
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{07_nikto.png}
+  \caption{Resultado del escaneo con Nikto.}
+  \label{fig:nikto}
+\end{figure}
+
+Nikto confirmó la ausencia de las cabeceras \texttt{Content-Security-Policy}, \texttt{Permissions-Policy} y \texttt{Strict-Transport-Security}, y observó \texttt{X-Powered-By: Express} y \texttt{Access-Control-Allow-Origin: *}, en línea con el análisis de cabeceras. En cambio, los hallazgos \texttt{/JAMonAdmin.jsp} (CVE-2013-6235), \texttt{/.bash\_history} y \texttt{/.sh\_history} son falsos positivos por que la aplicación al ser de tipo página única responde con código 200 a cualquier ruta, y el sistema no emplea Java ni JSP.
+
+\subsubsection{Escaneo con Nuclei}
+
+Se ejecutó Nuclei con plantillas de mala configuración, exposición y CVE conocidos del servidor del Ingress. El Listado \ref{lst:nuclei} recoge el comando.
+
+\begin{lstlisting}[language=bash,caption={Comando de escaneo con Nuclei},label=lst:nuclei]
+nuclei -u http://conjunta3p.espe.edu.ec \
+  -tags misconfig,exposure,http,cve -severity low,medium,high,critical
+\end{lstlisting}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{08_nuclei.png}
+  \caption{Resultado del escaneo con Nuclei.}
+  \label{fig:nuclei}
+\end{figure}
+
+Nuclei ejecutó 5474 plantillas de mala configuración, exposición y CVE conocidos sin obtener coincidencias, lo que indica que el Ingress no expone vulnerabilidades conocidas cubiertas por dichas plantillas.
 
 \subsubsection{Análisis de Cabeceras de Seguridad}
-% >>> LLENAR: HSTS, CSP, X-Frame-Options, etc. <<<
+
+El análisis de las respuestas capturadas en la Fase 2 (Figura \ref{fig:cabeceras}) reveló una protección desigual entre el frontend y la API, resumida en la Tabla \ref{tab:cabeceras}. La API respondió, además, con \texttt{X-Powered-By: Express} y \texttt{Access-Control-Allow-Origin: *}. Al servirse el sistema por HTTP, la cabecera \texttt{Strict-Transport-Security} no aplica.
+
+\begin{table}[H]
+  \centering
+  \caption{Cabeceras de seguridad presentes por componente}
+  \label{tab:cabeceras}
+  \begin{tabularx}{\textwidth}{X l l}
+    \toprule
+    \textbf{Cabecera} & \textbf{Frontend (\texttt{/})} & \textbf{API (\texttt{/api})} \\
+    \midrule
+    \texttt{Content-Security-Policy} & Ausente & Ausente \\
+    \texttt{X-Frame-Options} & Presente & Ausente \\
+    \texttt{X-Content-Type-Options} & Presente & Ausente \\
+    \texttt{Referrer-Policy} & Presente & Ausente \\
+    \texttt{Strict-Transport-Security} & No aplica (HTTP) & No aplica (HTTP) \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
 \subsubsection{Resumen de Vulnerabilidades Detectadas}
+
+La Tabla \ref{tab:vulns} resume las vulnerabilidades identificadas en esta fase. Los hallazgos de mayor severidad, que requieren explotación activa (registro con rol arbitrario, creación de JWT e inyección de instrucciones), se documentan en la Fase 5.
+
 \begin{table}[H]
   \centering
   \caption{Vulnerabilidades detectadas en la fase de análisis}
@@ -796,10 +844,11 @@ El modelado de amenazas se apoyó en el Diagrama de Flujo de Datos (DFD) de la F
     \toprule
     \textbf{ID} & \textbf{Descripción} & \textbf{Severidad (CVSS)} \\
     \midrule
-    % >>> LLENAR las celdas de cada fila <<<
-    V-01 & & \\
-    V-02 & & \\
-    V-03 & & \\
+    V-01 & Comunicación sin cifrar (HTTP): credenciales y JWT viajan en claro. & Media (5.9) \\
+    V-02 & Política de CORS totalmente abierta (\texttt{Access-Control-Allow-Origin: *}). & Media (5.3) \\
+    V-03 & Ausencia de cabeceras de seguridad en la API y de \texttt{Content-Security-Policy}. & Media (4.3) \\
+    V-04 & Divulgación de información en \texttt{/api/db-test} (mensaje de error de la base de datos). & Baja (3.7) \\
+    V-05 & Divulgación de tecnología mediante \texttt{X-Powered-By: Express}. & Baja (3.1) \\
     \bottomrule
   \end{tabularx}
 \end{table}

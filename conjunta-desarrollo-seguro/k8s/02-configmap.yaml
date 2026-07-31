@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
     name: inventrack-config
-    namespace: inventrack-prod
+    namespace: conjunta-desarrollo-seguro
 data:
     PORT: "4000"
     DB_HOST: "mysql"

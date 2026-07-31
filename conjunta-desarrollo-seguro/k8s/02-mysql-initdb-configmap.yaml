@@ -149,4 +149,4 @@ data:
 kind: ConfigMap
 metadata:
     name: mysql-initdb
-    namespace: inventrack-prod
+    namespace: conjunta-desarrollo-seguro

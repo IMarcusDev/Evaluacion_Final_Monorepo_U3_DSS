@@ -74,7 +74,7 @@
 
 \shorttitle{AUDITORÍA DE SEGURIDAD — INVENTRACK}
 
-\author{Marcos Escobar}
+\author{Marcos David Escobar Vela}
 \affiliation{Universidad de las Fuerzas Armadas ESPE}
 
 \course{30735 — Desarrollo de Software Seguro}
@@ -129,7 +129,7 @@ El objetivo general de esta evaluación es realizar un despliegue seguro del sis
 Repositorio GitHub (manifiestos \texttt{.yml}): \url{https://github.com/IMarcusDev/Evaluacion_Final_k8s_30735_DSS/tree/main}
 
 \subsection{Enlace al Repositorio Monorepo de la Aplicación InvenTrack}
-Repositorio GitHub (monorepo): \url{https://github.com/IMarcusDev/Proyecto_Final_Monorepo_U3_DSS/tree/main}
+Repositorio GitHub (monorepo): \url{https://github.com/IMarcusDev/Evaluacion_Final_Monorepo_U3_DSS}
 
 %=====================================================================
 % 1. DOCKERIZACIÓN DE COMPONENTES (10%)
@@ -964,17 +964,87 @@ Dos pruebas adicionales confirmaron hallazgos de la fase de análisis. Una petic
 
 %----------------------- FASE 6 -----------------------
 \subsection{Fase 6: Post-Explotación (Post-Exploitation) — 8\%}
-% Impacto: acceso a datos sensibles, escalación de privilegios, extracción de datos,
-% persistencia de sesión y validación del hasheo con bcrypt.
+
+La post-explotación partió del acceso de administrador obtenido en la Fase 5. La validación del hash en la base de datos se realizó desde el equipo local con \texttt{kubectl}, dado que MySQL es un Service \texttt{ClusterIP} no accesible desde el exterior.
 
 \subsubsection{Análisis de Impacto}
-% >>> LLENAR <<<
+
+Con el token de administrador, un atacante accede a la información sensible del sistema: el listado de usuarios (nombres, correos y roles), el registro de auditoría, las métricas del \emph{dashboard} y el inventario con sus movimientos. El Listado \ref{lst:impacto} muestra las peticiones y las Figuras \ref{fig:impacto} a \ref{fig:movimientos}, las respuestas obtenidas.
+
+\begin{lstlisting}[language=bash,caption={Acceso a datos sensibles con el token de administrador},label=lst:impacto]
+curl -s -H "Authorization: Bearer $TOKEN" http://conjunta3p.espe.edu.ec/api/usuarios
+curl -s -H "Authorization: Bearer $TOKEN" http://conjunta3p.espe.edu.ec/api/auditoria
+curl -s -H "Authorization: Bearer $TOKEN" http://conjunta3p.espe.edu.ec/api/dashboard
+curl -s -H "Authorization: Bearer $TOKEN" http://conjunta3p.espe.edu.ec/api/movimientos
+\end{lstlisting}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{01_usuarios.png}
+  \caption{Listado de usuarios (PII y roles) con el token de administrador.}
+  \label{fig:impacto}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{02_auditoria.png}
+  \caption{Registro de auditoría accesible con el token de administrador.}
+  \label{fig:auditoria}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{03_dashboard.png}
+  \caption{Métricas del \emph{dashboard} con el token de administrador.}
+  \label{fig:dashboard}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{04_movimientos.png}
+  \caption{Inventario y movimientos (kardex) con el token de administrador.}
+  \label{fig:movimientos}
+\end{figure}
 
 \subsubsection{Validación del Hasheo con bcrypt}
-% >>> LLENAR <<<
+
+El hasheo se validó en dos niveles (Listado \ref{lst:bcrypt}). Por el lado de la API, la respuesta de \texttt{/api/usuarios} no incluye el campo \texttt{password} (Figura \ref{fig:hashapi}), por lo que el hash no se filtra a través de la interfaz. Por el lado de la base de datos, una consulta desde el anfitrión con \texttt{kubectl} mostró que las contraseñas se almacenan como hashes bcrypt (prefijo \texttt{\$2b\$10\$}, longitud 60, Figura \ref{fig:bcrypt}), lo que confirma el uso de bcrypt con factor de costo 10.
+
+\begin{lstlisting}[language=bash,caption={Validación del hasheo con bcrypt},label=lst:bcrypt]
+# API: la respuesta no incluye el campo password
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://conjunta3p.espe.edu.ec/api/usuarios | jq '.[0]'
+
+# Base de datos (desde el anfitrion): formato del hash almacenado
+kubectl exec -n conjunta-desarrollo-seguro deploy/mysql -- \
+  mysql -uroot -p<password> inventrack -N \
+  -e "SELECT email, LEFT(password,7), CHAR_LENGTH(password) FROM usuarios LIMIT 5;"
+\end{lstlisting}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{05_hash_api.png}
+  \caption{La respuesta de \texttt{/api/usuarios} no incluye el campo \texttt{password}.}
+  \label{fig:hashapi}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{bcrypt_db.png}
+  \caption{Contraseñas almacenadas como hashes bcrypt (\texttt{\$2b\$10\$}, longitud 60).}
+  \label{fig:bcrypt}
+\end{figure}
 
 \subsubsection{Escalación de Privilegios (admin vs almacenero)}
-% >>> LLENAR <<<
+
+La escalada lograda en la Fase 5 otorga el conjunto completo de capacidades de administrador. Con el token \texttt{admin}, las rutas \texttt{soloAdmin} (\texttt{/api/usuarios}, \texttt{/api/auditoria}) responden \texttt{200} (Figura \ref{fig:escalacion}), mientras que un usuario \texttt{almacenero} recibe \texttt{403} en esas mismas rutas (Figura \ref{fig:autorizacion}). El registro abierto convierte así a cualquier visitante en administrador con acceso total a la gestión de usuarios, la auditoría y la carga de datos.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{06_escalacion.png}
+  \caption{Rutas \texttt{soloAdmin} con código \texttt{200} usando el token de administrador.}
+  \label{fig:escalacion}
+\end{figure}
 
 %----------------------- FASE 7 -----------------------
 \subsection{Fase 7: Reporte (Reporting) — 5\%}

